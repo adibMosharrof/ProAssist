@@ -1,0 +1,10 @@
+name: manual
+data_path: data/proassist/processed_data
+num_rows: 3
+datasets: 
+  - assembly101
+  # - ego4d
+  # - egoexolearn
+  # - epickitchens
+  # - holoassist
+  # - wtag

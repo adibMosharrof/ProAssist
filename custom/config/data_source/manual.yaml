@@ -1,0 +1,3 @@
+name: manual
+data_path: data/proassist_dst_manual_data
+num_rows: 3

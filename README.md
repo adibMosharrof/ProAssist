@@ -83,6 +83,13 @@ We provide several notebooks to demonstrate:
 4. LLM-as-a-judge evaluation ([link](notebooks/llm_eval_playground.ipynb))
 5. Dataset statistics overview ([link](notebooks/data_analysis.ipynb))
 
+### Using the DST generator
+
+This repo includes a configurable DST generator that produces structured DST JSON for dataset items using LLMs (single or batch mode). See `PROJECT_CONTEXT.md` for a concise project summary and run instructions. The recommended entrypoint is the runner script which activates the repository venv and runs the Hydra-driven generator:
+
+```bash
+bash custom/runner/run_dst_generator.sh
+```
 ### Training & Evaluation
 Note: the training and evaluation scripts only work with the slurm cluster currently.
 ```

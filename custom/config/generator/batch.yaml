@@ -1,0 +1,6 @@
+# Batch generator settings (merged under `generator`)
+type: batch
+batch_size: 10
+save_intermediate: true
+max_retries: 0
+check_interval: 60

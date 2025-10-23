@@ -142,3 +142,5 @@ slurm_logs
 data/
 ProAssist-Dataset/
 
+custom/outputs
+ego4d/
