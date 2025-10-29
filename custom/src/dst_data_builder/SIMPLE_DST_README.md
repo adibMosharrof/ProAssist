@@ -49,7 +49,7 @@ cd /u/siddique-d1/adib/ProAssist
 bash custom/runner/run_dst_generator.sh
 ```
 
-Note: `OPENAI_API_KEY` must be set in your environment (or in your shell profile) for runs that call the OpenAI API.
+Note: `OPENROUTER_API_KEY` must be set in your environment (or in your shell profile) for runs that call the OpenRouter API.
 
 ## ⚙️ Configuration Options
 

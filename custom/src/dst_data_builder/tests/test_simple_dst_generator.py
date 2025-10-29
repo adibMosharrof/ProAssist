@@ -40,7 +40,7 @@ Data requirements and environment
     - assembly_nusar-... .json
     - ego4d_grp-... .json
 
-- `OPENAI_API_KEY` is not required because tests patch the OpenAI client. If
+- `OPENROUTER_API_KEY` is not required because tests patch the OpenAI client. If
     you run tests without the provided patches, ensure the environment variable
     is set or tests will raise an initialization error.
 
@@ -81,26 +81,31 @@ class TestSimpleDSTGenerator:
             {
                 "generator": {"type": "single"},
                 "model": {"name": "gpt-4o", "temperature": 0.1, "max_tokens": 4000},
+                "max_retries": 1,
             }
         )
 
     @pytest.fixture
     def sample_data_assembly(self):
-        """Load sample assembly data"""
-        data_path = Path(
-            "data/proassist_dst_manual_data/assembly_nusar-2021_action_both_9011-c03f_9011_user_id_2021-02-01_160239__HMC_84355350_mono10bit.json"
-        )
-        with open(data_path, "r") as f:
-            return json.load(f)
+        """Create sample assembly data inline"""
+        return {
+            "video_uid": "assembly_test_001",
+            "inferred_knowledge": "Task involves assembling components",
+            "parsed_video_anns": {
+                "all_step_descriptions": "[0.0s-10.0s] Pick up component\n[10.0s-20.0s] Attach component"
+            }
+        }
 
     @pytest.fixture
     def sample_data_ego4d(self):
-        """Load sample ego4d data"""
-        data_path = Path(
-            "data/proassist_dst_manual_data/ego4d_grp-cec778f9-9b54-4b67-b013-116378fd7a85.json"
-        )
-        with open(data_path, "r") as f:
-            return json.load(f)
+        """Create sample ego4d data inline"""
+        return {
+            "video_uid": "ego4d_test_001",
+            "inferred_knowledge": "Task involves cooking",
+            "parsed_video_anns": {
+                "all_step_descriptions": "[0.0s-15.0s] Prepare ingredients\n[15.0s-30.0s] Cook food"
+            }
+        }
 
     def test_initialization_with_config(self, sample_config):
         """Test that generator initializes correctly with config"""
@@ -116,7 +121,10 @@ class TestSimpleDSTGenerator:
         with mock.patch("openai.OpenAI"):
             generator = SimpleDSTGenerator(sample_config)
 
-            # create_dst_prompt is implemented on the GPT generator returned by the factory
+            # create_dst_prompt is now a standalone function in dst_generation_prompt module
+            # Import it directly for testing
+            from dst_data_builder.gpt_generators.dst_generation_prompt import create_dst_prompt
+            
             # The code under test expects `all_step_descriptions` under
             # `parsed_video_anns` in the unified format. Read it defensively.
             parsed = sample_data_assembly.get("parsed_video_anns", {})
@@ -125,7 +133,7 @@ class TestSimpleDSTGenerator:
                 sample_data_assembly.get("all_step_descriptions", ""),
             )
 
-            prompt = generator.gpt_generator.create_dst_prompt(
+            prompt = create_dst_prompt(
                 sample_data_assembly.get("inferred_knowledge", ""),
                 all_desc,
             )
@@ -152,36 +160,44 @@ class TestSimpleDSTGenerator:
             assert isinstance(matches, list)
             assert len(matches) > 0
 
-    def test_required_fields_validation(self, sample_config):
+    @pytest.mark.asyncio
+    async def test_required_fields_validation(self, sample_config, tmp_path):
         """Test that missing required fields are handled correctly"""
         with mock.patch("openai.OpenAI"):
             generator = SimpleDSTGenerator(sample_config)
 
-            # Test with missing fields
+            # Create a file with incomplete data
             incomplete_data = {
                 "video_uid": "test",
-                # Missing inferred_knowledge and all_step_descriptions
+                # Missing inferred_knowledge and parsed_video_anns
             }
+            
+            test_file = tmp_path / "incomplete.json"
+            test_file.write_text(json.dumps(incomplete_data))
 
-            with mock.patch("builtins.open", mock.mock_open()):
-                with mock.patch("json.load", return_value=incomplete_data):
-                    results = generator.gpt_generator.generate_dst_outputs(
-                        ["dummy_path"]
-                    )
-                    assert "dummy_path" in results
-                    assert results["dummy_path"] is None
+            # Should handle missing fields gracefully
+            results = await generator.gpt_generator.generate_dst_outputs([str(test_file)])
+            assert str(test_file) in results
+            # Result should be None for invalid input
+            assert results[str(test_file)] is None
 
-    def test_dst_structure_validation(self, sample_config, sample_data_assembly):
+    @pytest.mark.asyncio
+    async def test_dst_structure_validation(self, sample_config, sample_data_assembly, tmp_path):
         """Test that generated DST has correct structure"""
         with mock.patch("openai.OpenAI"):
             generator = SimpleDSTGenerator(sample_config)
 
-            # Mock the OpenAI response
+            # Create test file
+            test_file = tmp_path / "test.json"
+            test_file.write_text(json.dumps(sample_data_assembly))
+
+            # Mock the API response to return valid DST
             mock_dst = {
                 "steps": [
                     {
                         "step_id": "S1",
                         "name": "Test step",
+                        "timestamps": {"start_ts": 0.0, "end_ts": 30.0},
                         "substeps": [
                             {
                                 "sub_id": "S1.1",
@@ -191,15 +207,7 @@ class TestSimpleDSTGenerator:
                                     {
                                         "act_id": "S1.1.a",
                                         "name": "Test action",
-                                        "args_schema": {
-                                            "object": "test",
-                                            "tool": None,
-                                            "qty": None,
-                                        },
-                                        "timestamps": {
-                                            "start_ts": 10.0,
-                                            "end_ts": 15.0,
-                                        },
+                                        "timestamps": {"start_ts": 10.0, "end_ts": 15.0},
                                     }
                                 ],
                             }
@@ -208,35 +216,23 @@ class TestSimpleDSTGenerator:
                 ]
             }
 
-            with mock.patch("openai.OpenAI") as mock_openai:
-                # Create generator while OpenAI is patched so its client is a mock
-                generator = SimpleDSTGenerator(sample_config)
+            # Mock _attempt_dst_generation to return valid DST
+            async def fake_attempt(ik, desc, prev_reason=""):
+                return True, json.dumps(mock_dst)
 
-                # Build a realistic mock response shape: response.choices[0].message.content
-                mock_response = mock.Mock()
-                choice = mock.Mock()
-                choice.message = mock.Mock()
-                choice.message.content = json.dumps(mock_dst)
-                mock_response.choices = [choice]
+            generator.gpt_generator._attempt_dst_generation = fake_attempt
 
-                # Ensure the generator's client returns our mock response
-                generator.gpt_generator.client.chat.completions.create.return_value = (
-                    mock_response
-                )
-
-                with mock.patch("builtins.open", mock.mock_open()):
-                    with mock.patch("json.load", return_value=sample_data_assembly):
-                        results = generator.gpt_generator.generate_dst_outputs(
-                            ["dummy_path"]
-                        )
-                        assert "dummy_path" in results
-                        dst_output = results["dummy_path"]
-                        assert dst_output is not None
-                        result_dict = dst_output.to_dict()
-                        assert "dst" in result_dict
-                        assert "steps" in result_dict["dst"]
-                        assert "metadata" in result_dict
-                        assert "counts" in result_dict["metadata"]
+            # Generate DST
+            results = await generator.gpt_generator.generate_dst_outputs([str(test_file)])
+            
+            assert str(test_file) in results
+            dst_output = results[str(test_file)]
+            assert dst_output is not None
+            result_dict = dst_output.to_dict()
+            assert "dst" in result_dict
+            assert "steps" in result_dict["dst"]
+            assert "metadata" in result_dict
+            assert "counts" in result_dict["metadata"]
 
     def test_metadata_generation(self, sample_config):
         """Test that metadata is generated correctly"""

@@ -3,13 +3,16 @@ Base GPT Generator - Abstract base class for GPT-based DST generation
 """
 
 import json
-import openai
+import logging
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Tuple, Optional
+from pathlib import Path
+
 from dst_data_builder.datatypes.dst_output import DSTOutput
-import re
-import time
-import logging
+from dst_data_builder.utils.hydra_utils import get_hydra_output_dir
+from dst_data_builder.validators.json_parsing_validator import JSONParsingValidator
+from dst_data_builder.gpt_generators.dst_generation_prompt import create_dst_prompt
+from dst_data_builder.gpt_generators.openai_api_client import OpenAIAPIClient
 
 
 class BaseGPTGenerator(ABC):
@@ -21,158 +24,64 @@ class BaseGPTGenerator(ABC):
         model_name: str = "gpt-4o",
         temperature: float = 0.1,
         max_tokens: int = 4000,
+        max_retries: int = 2,
         validators: list = None,
     ):
-        self.client = openai.OpenAI(api_key=api_key)
+        # Instance-level logger for this generator and subclasses
+        self.logger = logging.getLogger(__name__)
+
+        self.api_key = api_key
         self.model_name = model_name
         self.temperature = temperature
         self.max_tokens = max_tokens
+        # Retries configuration
+        self.max_retries = int(max_retries) if max_retries is not None else 2
+
+        # Initialize JSON parsing validator (separate from structural validators)
+        self.json_validator = JSONParsingValidator()
+
         # Initialize validators: expect list of BaseValidator instances
+        # These validators run AFTER JSON parsing succeeds
         self.validators = validators or []
 
-    def create_dst_prompt(
-        self, inferred_knowledge: str, all_step_descriptions: str
-    ) -> str:
-        """Create a prompt for the LLM to generate DST structure"""
-        return f"""
-You are an expert at creating Dialog State Tracking (DST) structures for procedural tasks.
+        # Create the OpenAI API client (default uses OpenRouter)
+        self.api_client = self._create_api_client()
 
-Given the following information, create a hierarchical DST structure:
-
-INFERRED KNOWLEDGE (high-level steps):
-{inferred_knowledge}
-
-DETAILED STEP DESCRIPTIONS (with timestamps):
-{all_step_descriptions}
-
-Please create a DST structure in the following JSON format:
-
-{{
-    "steps": [
-        {{
-            "step_id": "S1",
-            "name": "High-level step name from inferred knowledge",
-            "substeps": [
-                {{
-                    "sub_id": "S1.1",
-                    "name": "Substep name derived from detailed descriptions",
-                    "timestamps": {{
-                        "start_ts": 10.5,
-                        "end_ts": 25.3
-                    }},
-                    "actions": [
-                        {{
-                            "act_id": "S1.1.a",
-                            "name": "Specific action description",
-                            "args_schema": {{
-                                "object": "object_being_manipulated",
-                                "tool": "tool_used_if_any",
-                                "qty": quantity_or_null
-                            }},
-                            "timestamps": {{
-                                "start_ts": 10.5,
-                                "end_ts": 15.2
-                            }}
-                        }}
-                    ]
-                }}
-            ]
-        }}
-    ]
-}}
-
-Rules:
-1. Use the inferred_knowledge to determine the main steps (S1, S2, S3, etc.)
-2. Use the detailed step descriptions to create substeps and actions with proper timestamps
-3. Extract objects, tools, and quantities from the descriptions
-4. Ensure timestamps are properly aligned between steps, substeps, and actions
-5. Make action names descriptive and specific
-6. Use null for args_schema fields when information is not available
-
-Return only the JSON structure, no additional text.
-"""
-
-    def _clean_json_response(self, content: str) -> str:
-        """Clean common JSON formatting issues in GPT responses"""
-        # Remove markdown code blocks
-        content = re.sub(r"```json\s*", "", content)
-        content = re.sub(r"```\s*$", "", content)
-
-        # Fix trailing commas before closing braces/brackets
-        content = re.sub(r",(\s*[}\]])", r"\1", content)
-
-        return content.strip()
-
-    # `_validate_dst_structure` removed: validation is handled externally by the
-    # project's validators (StructureValidator/TimestampsValidator). The
-    # generator no longer performs structural validation here.
-
-    def _attempt_dst_generation(
-        self, inferred_knowledge: str, all_step_descriptions: str
-    ) -> Dict[str, Any]:
+    def _create_api_client(self) -> OpenAIAPIClient:
         """
-        Single attempt at DST generation (used by both single and batch generators)
+        Create and return an OpenAI API client. Can be overridden by subclasses.
+        
+        Default implementation uses OpenRouter base URL.
+        """
+        return OpenAIAPIClient(
+            api_key=self.api_key,
+            base_url="https://openrouter.ai/api/v1",
+            logger=self.logger
+        )
 
-        Args:
-            inferred_knowledge: High-level step descriptions
-            all_step_descriptions: Detailed timestamped descriptions
+    async def _attempt_dst_generation(
+        self, inferred_knowledge: str, all_step_descriptions: str, previous_failure_reason: str = ""
+    ) -> Tuple[bool, str]:
+        """
+        Single attempt at DST generation - API call only, returns raw response.
 
         Returns:
-            DST structure dictionary or None if generation fails
+            Tuple of (success: bool, result: str)
+            - On success: (True, raw_api_response_string)
+            - On failure: (False, error_message)
         """
-        prompt = self.create_dst_prompt(inferred_knowledge, all_step_descriptions)
+        if previous_failure_reason:
+            self.logger.info("Including failure section in prompt with reason: %s", previous_failure_reason)
 
-        logger = logging.getLogger(__name__)
+        prompt = create_dst_prompt(inferred_knowledge, all_step_descriptions, previous_failure_reason)
 
-        try:
-            logger.info(f"Making GPT API call with {len(prompt)} character prompt...")
-
-            # Call OpenAI API
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert at creating hierarchical task structures.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-            )
-
-            # Parse response
-            dst_content = response.choices[0].message.content.strip()
-            logger.info(f"Received response length: {len(dst_content)} characters")
-
-            # Try to extract JSON if there's extra text
-            if not dst_content.startswith("{"):
-                # Find JSON in the response
-                json_match = re.search(r"\{.*\}", dst_content, re.DOTALL)
-                if json_match:
-                    dst_content = json_match.group()
-                    logger.info(
-                        f"Extracted JSON portion: {len(dst_content)} characters"
-                    )
-
-            # Clean up common JSON issues
-            dst_content = self._clean_json_response(dst_content)
-
-            # Try to parse JSON
-            try:
-                dst_structure = json.loads(dst_content)
-            except json.JSONDecodeError as json_error:
-                logger.exception(f"JSON parsing failed: {json_error}")
-                return None
-
-            # Structural validation is handled externally by the validators.
-
-            logger.info("✅ Successfully generated DST structure")
-            return dst_structure
-
-        except Exception as e:
-            logger.exception(f"Error in DST generation: {e}")
-            return None
+        # Use API client to make the call
+        return await self.api_client.generate_completion(
+            prompt=prompt,
+            model=self.model_name,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+        )
 
     def _run_validators(self, dst_structure: Dict[str, Any]) -> Tuple[bool, str]:
         """Run configured validators against dst_structure.
@@ -190,30 +99,253 @@ Return only the JSON structure, no additional text.
 
         return True, ""
 
-    @abstractmethod
-    def generate_dst_outputs(
-        self, file_paths: List[str]
-    ) -> Dict[str, Optional[DSTOutput]]:
-        """Generate DST outputs for a list of input file paths.
+    def _log_validator_statistics(self):
+        """Log statistics from validators that support it."""
+        if not self.validators:
+            return
+        
+        from dst_data_builder.validators.timestamps_validator import TimestampsValidator
+        
+        for validator in self.validators:
+            if isinstance(validator, TimestampsValidator):
+                stats = validator.get_post_processing_stats()
+                if stats.get("total_fixes", 0) > 0:
+                    self.logger.info("="*60)
+                    self.logger.info("📊 TimestampsValidator Post-Processing Statistics:")
+                    self.logger.info(f"   Total timestamp violations fixed: {stats['total_fixes']}")
+                    self.logger.info("="*60)
+                break
 
-        Implementations should handle file reading, validation, batching, calling the
-        underlying GPT generation methods, and constructing DSTOutput objects (or
-        None for failures).
+    async def _try_generate_and_validate(self, inferred_knowledge: str, all_step_descriptions: str, previous_failure_reason: str = "") -> Tuple[bool, Any, str, Any]:
         """
-        pass
+        Generation + JSON parsing + validation with unified error handling.
 
-    @abstractmethod
-    def generate_multiple_dst_structures(
-        self, items: List[Tuple[str, str, str]], max_retries: int = 2
-    ) -> Dict[str, Dict[str, Any]]:
+        Returns (ok, dst_structure, reason_if_failed, generated_content)
         """
-        Generate DST structures for multiple items
+        # Step 1: API call (returns raw string)
+        success, raw_response = await self._attempt_dst_generation(inferred_knowledge, all_step_descriptions, previous_failure_reason)
+        if not success:
+            # API error
+            return False, None, raw_response, None
+
+        # Step 2: Parse JSON with json_validator
+        parse_ok, parse_error = self.json_validator.validate(raw_response)
+        if not parse_ok:
+            # JSON parsing failed - return detailed error for retry
+            return False, None, parse_error, raw_response
+        
+        # Get parsed dict
+        dst_structure = self.json_validator.parsed_result
+
+        # Step 3: Run structural validators
+        valid, v_msg = self._run_validators(dst_structure)
+        if not valid:
+            return False, dst_structure, f"validator_rejected: {v_msg}", dst_structure
+
+        return True, dst_structure, "", None
+
+    def _read_input_files(self, file_paths: List[str]) -> Tuple[List[Tuple[str, str, str]], Dict[str, Any]]:
+        """Read and validate input files. Returns (items_list, raw_data_map)."""
+        items: List[Tuple[str, str, str]] = []
+        raw_map: Dict[str, Any] = {}
+
+        for input_path in file_paths:
+            try:
+                with open(input_path, "r") as f:
+                    data = json.load(f)
+            except Exception as e:
+                self.logger.exception(f"Failed to read {input_path}: {e}")
+                raw_map[input_path] = None
+                continue
+
+            inferred_knowledge = data.get("inferred_knowledge", "")
+            parsed_anns = data.get("parsed_video_anns", {})
+            all_step_descriptions = parsed_anns.get("all_step_descriptions", "")
+
+            if not inferred_knowledge or not all_step_descriptions:
+                self.logger.warning(f"Missing required fields in {input_path}")
+                raw_map[input_path] = None
+                continue
+
+            items.append((input_path, inferred_knowledge, all_step_descriptions))
+            raw_map[input_path] = data
+
+        return items, raw_map
+
+    def _save_dst_output(self, result: Optional[DSTOutput], input_path: str, dst_output_dir: Path) -> bool:
+        """Save a single DST output to file. Returns True if successful."""
+        try:
+            out_name = f"dst_{Path(input_path).name}"
+            out_file = dst_output_dir / out_name
+
+            if result is None:
+                self.logger.warning("Generation failed for %s", input_path)
+                return False
+
+            payload = result.to_dict() if hasattr(result, "to_dict") else result
+
+            with open(out_file, "w") as f:
+                json.dump(payload, f, indent=2)
+
+            self.logger.info("✅ Saved: %s", out_file)
+            return True
+
+        except Exception as e:
+            self.logger.exception("Failed to save output for %s: %s", input_path, e)
+            return False
+
+    async def generate_and_save_dst_outputs(
+        self, 
+        file_paths: List[str], 
+        dst_output_dir: Path,
+        batch_size: int = 5
+    ) -> Tuple[int, int]:
+        """
+        Generate DST outputs and save them incrementally in batches with global retry logic.
+        
+        Strategy:
+        1. Process all files in batches (attempt 1)
+        2. Collect all failures across batches
+        3. Retry all failures together in subsequent attempts
+        
+        Args:
+            file_paths: List of input file paths to process
+            dst_output_dir: Directory to save output files
+            batch_size: Number of files to process in parallel
+            
+        Returns:
+            Tuple of (processed_count, failed_count)
+        """
+        processed = 0
+        failed = 0
+        remaining_files = list(file_paths)
+        
+        for attempt in range(self.max_retries + 1):
+            if not remaining_files:
+                break
+                
+            attempt_num = attempt + 1
+            self.logger.info("=" * 60)
+            self.logger.info("Starting attempt %d/%d: %d files to process", attempt_num, self.max_retries + 1, len(remaining_files))
+            self.logger.info("=" * 60)
+            
+            attempt_failures = []
+            
+            # Process all remaining files in batches
+            for i in range(0, len(remaining_files), batch_size):
+                batch_files = remaining_files[i:i + batch_size]
+                batch_num = i // batch_size + 1
+                total_batches = (len(remaining_files) + batch_size - 1) // batch_size
+                
+                self.logger.info("🔄 Processing batch %d/%d: %d files", batch_num, total_batches, len(batch_files))
+                
+                try:
+                    batch_outputs = await self.generate_dst_outputs(batch_files)
+                    
+                    for input_path in batch_files:
+                        result = batch_outputs.get(input_path)
+                        
+                        if result and self._save_dst_output(result, input_path, dst_output_dir):
+                            processed += 1
+                        else:
+                            failed += 1
+                            attempt_failures.append(input_path)
+
+                except Exception as e:
+                    self.logger.exception("Failed to process batch %d: %s", batch_num, e)
+                    # Mark all files in this batch as failed
+                    attempt_failures.extend(batch_files)
+                    failed += len(batch_files)
+            
+            # Update remaining files for next attempt
+            remaining_files = attempt_failures
+            
+            if remaining_files:
+                self.logger.warning("⚠️  Attempt %d: %d files failed, will retry", attempt_num, len(remaining_files))
+            else:
+                self.logger.info("✅ Attempt %d: All files processed successfully", attempt_num)
+
+        # Log post-processing statistics from validators (only once at the end)
+        self._log_validator_statistics()
+
+        return processed, failed
+
+    async def generate_dst_outputs(self, file_paths: List[str]) -> Dict[str, Optional[DSTOutput]]:
+        """Read input files, generate DSTs for each, and return DSTOutput mapping."""
+        items, raw_map = self._read_input_files(file_paths)
+        results = await self.generate_multiple_dst_structures(items)
+
+        outputs: Dict[str, Optional[DSTOutput]] = {}
+        for input_file, dst_structure in results.items():
+            raw = raw_map.get(input_file)
+            if dst_structure and raw:
+                outputs[input_file] = DSTOutput.from_data_and_dst(
+                    raw, dst_structure, self.model_name
+                )
+            else:
+                outputs[input_file] = None
+
+        # Ensure every requested file_path is represented in outputs
+        for input_path in file_paths:
+            outputs.setdefault(input_path, None)
+
+        return outputs
+
+    async def generate_multiple_dst_structures(self, items: List[Tuple[str, str, str]]) -> Dict[str, Dict[str, Any]]:
+        """
+        Generate DST structures for multiple items (single attempt, no retries).
+        
+        Retries are handled at a higher level by generate_and_save_dst_outputs().
+        Subclasses should implement _execute_generation_round() to customize processing.
 
         Args:
             items: List of tuples (input_file, inferred_knowledge, all_step_descriptions)
-            max_retries: Maximum number of retry attempts for single generation
 
         Returns:
             Dictionary mapping input_file -> DST structure or None
+        """
+        results: Dict[str, Any] = {inp[0]: None for inp in items}
+        failure_reasons: Dict[str, str] = {}
+        
+        try:
+            successes, failures = await self._execute_generation_round(items, attempt_idx=0, failure_reasons=failure_reasons)
+        except Exception as e:
+            self.logger.exception("_execute_generation_round raised exception: %s", e)
+            # On exception, all items fail
+            return results
+        
+        # Apply successes
+        for inp, dst in successes.items():
+            results[inp] = dst
+            
+        # Log failures
+        if failures:
+            for f in failures:
+                self.logger.warning("Failed: %s - %s", f[0], f[3])
+        
+        return results
+
+    @abstractmethod
+    async def _execute_generation_round(
+        self, 
+        items: List[Tuple[str, str, str]], 
+        attempt_idx: int, 
+        failure_reasons: Dict[str, str]
+    ) -> Tuple[Dict[str, Dict[str, Any]], List[Tuple[str, str, str, str, Any]]]:
+        """
+        Execute one round of generation for the given items.
+        
+        Must be implemented by subclasses to define how items are processed
+        (e.g., sequentially, in parallel, in batches).
+        
+        Args:
+            items: List of (input_file, inferred_knowledge, all_step_descriptions)
+            attempt_idx: Current attempt index (0-based)
+            failure_reasons: Dict to track failure reasons per input file
+            
+        Returns:
+            Tuple of (successes_dict, failures_list)
+            - successes_dict: {input_file: dst_structure}
+            - failures_list: [(input_file, inferred_knowledge, all_step_descriptions, error_reason, generated_content), ...]
         """
         pass

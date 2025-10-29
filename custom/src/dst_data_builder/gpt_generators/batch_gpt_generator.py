@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Dict, Any, List, Tuple
 import time
 import logging
-from hydra.core.hydra_config import HydraConfig
+from openai import OpenAI
 from dst_data_builder.gpt_generators.base_gpt_generator import BaseGPTGenerator
+from dst_data_builder.gpt_generators.openai_api_client import OpenAIAPIClient
 from dst_data_builder.datatypes.dst_output import DSTOutput
-
+from dst_data_builder.utils.hydra_utils import get_hydra_output_dir
 # Module-level logger
 logger = logging.getLogger(__name__)
 
@@ -29,13 +30,38 @@ class BatchGPTGenerator(BaseGPTGenerator):
         check_interval: int = 60,
         save_intermediate: bool = False,
         max_retries: int = 2,
+        validators: list = None,
     ):
-        super().__init__(api_key, model_name, temperature, max_tokens)
+        super().__init__(api_key, model_name, temperature, max_tokens, max_retries=max_retries, validators=validators)
         # Configure batch options; prefer provided value, otherwise default
         self.batch_size = int(batch_size) if batch_size is not None else 100
         self.check_interval = int(check_interval) if check_interval is not None else 60
         self.save_intermediate = bool(save_intermediate)
-        self.max_retries = int(max_retries) if max_retries is not None else 2
+        
+        # Batch API needs direct OpenAI client (not async, not OpenRouter)
+        # This is separate from api_client which is used for async completions
+        self.batch_client = self._create_batch_client()
+
+    def _create_api_client(self) -> OpenAIAPIClient:
+        """
+        Override to create OpenAI API client without OpenRouter base URL.
+        Batch generator uses standard OpenAI endpoint.
+        """
+        return OpenAIAPIClient(
+            api_key=self.api_key,
+            base_url=None,  # Use standard OpenAI endpoint
+            logger=self.logger
+        )
+
+    def _create_batch_client(self) -> OpenAI:
+        """Create synchronous OpenAI client for batch API operations."""
+        try:
+            # Batch API requires direct OpenAI API, not OpenRouter
+            return OpenAI(api_key=self.api_key)
+        except Exception:
+            msg = "Failed to construct OpenAI batch client; Invalid API key provided."
+            self.logger.warning(msg)
+            return None
 
     def _create_batch_jsonl(
         self, items: List[Tuple[str, str, str]], batch_file: str
@@ -81,12 +107,12 @@ class BatchGPTGenerator(BaseGPTGenerator):
         logger.info(f"Uploading batch file: {batch_file}")
 
         with open(batch_file, "rb") as f:
-            batch_input_file = self.client.files.create(file=f, purpose="batch")
+            batch_input_file = self.batch_client.files.create(file=f, purpose="batch")
 
         logger.info(f"✅ Uploaded batch file, got file ID: {batch_input_file.id}")
 
         # Create batch job
-        batch_job = self.client.batches.create(
+        batch_job = self.batch_client.batches.create(
             input_file_id=batch_input_file.id,
             endpoint="/v1/chat/completions",
             completion_window="24h",
@@ -102,7 +128,7 @@ class BatchGPTGenerator(BaseGPTGenerator):
         logger.info(f"Waiting for batch {batch_id} to complete...")
 
         while True:
-            batch_status = self.client.batches.retrieve(batch_id)
+            batch_status = self.batch_client.batches.retrieve(batch_id)
             status = batch_status.status
 
             logger.info(f"Batch status: {status}")
@@ -126,7 +152,7 @@ class BatchGPTGenerator(BaseGPTGenerator):
         """Download batch results to output file"""
         logger.info(f"Downloading batch results to: {output_file}")
 
-        batch_status = self.client.batches.retrieve(batch_id)
+        batch_status = self.batch_client.batches.retrieve(batch_id)
         result_file_id = batch_status.output_file_id
 
         if not result_file_id:
@@ -134,7 +160,7 @@ class BatchGPTGenerator(BaseGPTGenerator):
             return
 
         # Download the results
-        result_content = self.client.files.content(result_file_id)
+        result_content = self.batch_client.files.content(result_file_id)
         result_content.write_to_file(output_file)
 
         logger.info(f"✅ Downloaded results to: {output_file}")
@@ -190,41 +216,27 @@ class BatchGPTGenerator(BaseGPTGenerator):
                                 cleaned = self._clean_json_response(content)
                                 dst_structure = json.loads(cleaned)
 
-                                if self._validate_dst_structure(dst_structure):
-                                        # Run additional validators if present
-                                        try:
-                                            valid, v_msg = self._run_validators(dst_structure)
-                                        except Exception:
-                                            valid, v_msg = True, ""
+                                # Run validators defined on the generator (Base._run_validators)
+                                try:
+                                    valid, v_msg = self._run_validators(dst_structure)
+                                except Exception as e:
+                                    logger.exception("Validator raised exception while validating %s: %s", custom_id, e)
+                                    valid, v_msg = False, f"validator_exception: {e}"
 
-                                        if not valid:
-                                            logger.error(
-                                                f"❌ Validator rejected structure for {custom_id}: {v_msg}"
-                                            )
-                                            results[custom_id] = None
-                                        else:
-                                            results[custom_id] = dst_structure
-                                            logger.info(f"✅ Parsed result for {custom_id}")
-                                else:
-                                    logger.error(
-                                        f"❌ Invalid structure for {custom_id}"
-                                    )
+                                if not valid:
+                                    logger.error(f"❌ Validator rejected structure for {custom_id}: {v_msg}")
                                     # Save raw content for debugging
                                     try:
                                         batch_dir = Path(results_file).parent
-                                        failed_path = (
-                                            batch_dir
-                                            / f"failed_raw_{Path(custom_id).name}.txt"
-                                        )
+                                        failed_path = batch_dir / f"failed_raw_{Path(custom_id).name}.txt"
                                         failed_path.write_text(content)
-                                        logger.info(
-                                            f"Saved raw invalid content to: {failed_path}"
-                                        )
+                                        logger.info(f"Saved raw invalid content to: {failed_path}")
                                     except Exception:
-                                        logger.exception(
-                                            "Failed to write raw invalid content"
-                                        )
+                                        logger.exception("Failed to write raw invalid content")
                                     results[custom_id] = None
+                                else:
+                                    results[custom_id] = dst_structure
+                                    logger.info(f"✅ Parsed result for {custom_id}")
                             except json.JSONDecodeError:
                                 logger.error(f"❌ Failed to parse JSON for {custom_id}")
                                 # Save raw content for debugging
@@ -293,15 +305,14 @@ class BatchGPTGenerator(BaseGPTGenerator):
 
         return results
 
-    def generate_multiple_dst_structures(
-        self, items: List[Tuple[str, str, str]], max_retries: int = 2
-    ) -> Dict[str, Dict[str, Any]]:
+    async def generate_multiple_dst_structures(self, items: List[Tuple[str, str, str]]) -> Dict[str, Dict[str, Any]]:
         """
-        Generate DST structures for multiple items using OpenAI's batch API
+        Generate DST structures for multiple items using OpenAI's batch API (single attempt).
+        
+        Retries are handled at a higher level by generate_and_save_dst_outputs().
 
         Args:
             items: List of tuples (input_file, inferred_knowledge, all_step_descriptions)
-            max_retries: Maximum number of retry attempts (not used in batch mode)
 
         Returns:
             Dictionary mapping input_file -> DST structure or None
@@ -311,152 +322,90 @@ class BatchGPTGenerator(BaseGPTGenerator):
 
         logger.info(f"🚀 Starting batch processing of {len(items)} items...")
 
-        # Resolve Hydra output directory (fallback to current working dir)
-        try:
-            hydra_cfg = HydraConfig.get()
-            hydra_output_dir = getattr(hydra_cfg.runtime, "output_dir", None)
-            base_dir = Path(hydra_output_dir) if hydra_output_dir else Path.cwd()
-        except Exception:
-            base_dir = Path.cwd()
-
+        base_dir = get_hydra_output_dir()
         batch_dir = base_dir / "batch"
         batch_dir.mkdir(parents=True, exist_ok=True)
 
-        # We'll attempt to process remaining_items up to max_retries times.
-        remaining_items = list(items)
-        final_results: Dict[str, Any] = {item[0]: None for item in items}
+        # Save batch_dir for use by the execution method
+        self._batch_dir = batch_dir
 
-        for attempt in range(0, max_retries + 1):
-            if not remaining_items:
-                break
+        # Use base class logic which calls _execute_generation_round
+        results: Dict[str, Any] = {inp[0]: None for inp in items}
+        failure_reasons: Dict[str, str] = {}
+        
+        try:
+            successes, failures = await self._execute_generation_round(items, attempt_idx=0, failure_reasons=failure_reasons)
+        except Exception as e:
+            logger.exception("_execute_generation_round raised exception: %s", e)
+            return results
+        
+        # Apply successes
+        for inp, dst in successes.items():
+            results[inp] = dst
+            
+        # Log failures
+        if failures:
+            for f in failures:
+                logger.warning("Failed: %s - %s", f[0], f[3])
+        
+        return results
 
-            attempt_ts = int(time.time())
-            batch_file = str(
-                batch_dir / f"batch_dst_requests_{attempt_ts}_attempt{attempt}.jsonl"
-            )
-            results_file = str(
-                batch_dir / f"batch_dst_results_{attempt_ts}_attempt{attempt}.jsonl"
-            )
+    async def _execute_generation_round(self, remaining_items: List[Tuple[str, str, str]], attempt_idx: int, failure_reasons: Dict[str, str] = None):
+        """Batch-specific execution method for single generation round."""
+        successes: Dict[str, Any] = {}
+        failures: List[Tuple[str, str, str, str]] = []
+        failure_reasons = failure_reasons or {}
 
-            try:
-                logger.info(
-                    f"Attempt {attempt+1}/{max_retries+1}: processing {len(remaining_items)} items"
-                )
+        attempt_ts = int(time.time())
+        batch_file = str(self._batch_dir / f"batch_dst_requests_{attempt_ts}_attempt{attempt_idx}.jsonl")
+        results_file = str(self._batch_dir / f"batch_dst_results_{attempt_ts}_attempt{attempt_idx}.jsonl")
 
-                # Create batch JSONL for only remaining items
-                self._create_batch_jsonl(remaining_items, batch_file)
+        try:
+            logger.info("Attempt %d/%d: processing %d items", attempt_idx + 1, self.max_retries + 1, len(remaining_items))
 
-                # Upload and create batch job
-                batch_id = self._upload_batch(batch_file)
+            # Create batch requests file
+            self._create_batch_jsonl(remaining_items, batch_file)
 
-                # Wait for completion
-                batch_status = self._wait_for_batch_completion(batch_id)
+            # Upload and create batch job
+            batch_id = self._upload_batch(batch_file)
 
-                if not batch_status:
-                    logger.error("❌ Batch processing failed")
-                    # Do not retry on complete batch failure; mark remaining as None and break
-                    break
+            # Wait for completion
+            batch_status = self._wait_for_batch_completion(batch_id)
+            if not batch_status:
+                logger.error("❌ Batch processing failed for attempt %d", attempt_idx + 1)
+                # mark all as failed for this attempt
+                for inp in remaining_items:
+                    failures.append((inp[0], inp[1], inp[2], "batch_failed", None))
+                return successes, failures
 
-                # Download results
-                self._download_batch_results(batch_id, results_file)
+            # Download and parse results
+            self._download_batch_results(batch_id, results_file)
+            batch_results = self._parse_batch_results(results_file)
 
-                # Parse results
-                batch_results = self._parse_batch_results(results_file)
-
-                # Update final_results and compute new remaining_items
-                new_remaining: List[Tuple[str, str, str]] = []
-                for (
-                    input_file,
-                    inferred_knowledge,
-                    all_step_descriptions,
-                ) in remaining_items:
-                    parsed = batch_results.get(input_file)
-                    if parsed:
-                        final_results[input_file] = parsed
-                    else:
-                        # Keep this item for the next attempt
-                        new_remaining.append(
-                            (input_file, inferred_knowledge, all_step_descriptions)
-                        )
-
-                remaining_items = new_remaining
-
-                logger.info(
-                    f"Attempt {attempt+1} complete: {len(remaining_items)} items remaining"
-                )
-
-            except Exception as e:
-                logger.error(f"❌ Error in batch processing attempt {attempt}: {e}")
-                # On exception, keep remaining_items as-is and continue to next attempt
-
-            finally:
-                # Clean up temporary files for this attempt
-                try:
-                    if os.path.exists(batch_file):
-                        os.remove(batch_file)
-                        logger.info(f"🗑️ Cleaned up batch file: {batch_file}")
-
-                    # Only remove results file if save_intermediate is False
-                    if os.path.exists(results_file) and not getattr(
-                        self, "save_intermediate", False
-                    ):
-                        os.remove(results_file)
-                        logger.info(f"🗑️ Cleaned up results file: {results_file}")
-                except Exception as e:
-                    logger.warning(f"Warning: Could not clean up temporary files: {e}")
-
-        return final_results
-
-    def generate_dst_outputs(self, file_paths: List[str]) -> Dict[str, DSTOutput]:
-        """Process the provided file paths in batches using the batch API.
-
-        Returns a mapping input_file -> DSTOutput or None on failure.
-        """
-        # Read and prepare items
-        items = []
-        raw_map = {}
-
-        for input_path in file_paths:
-            try:
-                with open(input_path, "r") as f:
-                    data = json.load(f)
-            except Exception as e:
-                logger.exception(f"Failed to read {input_path}: {e}")
-                raw_map[input_path] = None
-                continue
-
-            inferred_knowledge = data.get("inferred_knowledge", "")
-            parsed_anns = data.get("parsed_video_anns", {})
-            all_step_descriptions = parsed_anns.get("all_step_descriptions", "")
-
-            if not inferred_knowledge or not all_step_descriptions:
-                logger.warning(f"Missing required fields in {input_path}")
-                raw_map[input_path] = None
-                continue
-
-            items.append((input_path, inferred_knowledge, all_step_descriptions))
-            raw_map[input_path] = data
-
-        outputs = {}
-
-        # Chunk items according to self.batch_size
-        for i in range(0, len(items), self.batch_size):
-            chunk = items[i : i + self.batch_size]
-            results = self.generate_multiple_dst_structures(
-                chunk, max_retries=self.max_retries
-            )
-
-            for input_file, dst_structure in results.items():
-                raw = raw_map.get(input_file)
-                if dst_structure and raw:
-                    outputs[input_file] = DSTOutput.from_data_and_dst(
-                        raw, dst_structure, self.model_name
-                    )
+            # Populate successes/failures
+            for input_file, inferred_knowledge, all_step_descriptions in remaining_items:
+                parsed = batch_results.get(input_file)
+                if parsed:
+                    successes[input_file] = parsed
                 else:
-                    outputs[input_file] = None
+                    failures.append((input_file, inferred_knowledge, all_step_descriptions, "no_result", None))
 
-        # Ensure every requested file_path is represented
-        for input_path in file_paths:
-            outputs.setdefault(input_path, None)
+        except Exception as e:
+            logger.exception("Error processing batch attempt %d: %s", attempt_idx + 1, e)
+            for inp in remaining_items:
+                failures.append((inp[0], inp[1], inp[2], f"attempt_exception: {e}", None))
 
-        return outputs
+        finally:
+            # Clean up temporary files for this attempt
+            try:
+                if os.path.exists(batch_file):
+                    os.remove(batch_file)
+                    logger.info(f"🗑️ Cleaned up batch file: {batch_file}")
+
+                if os.path.exists(results_file) and not getattr(self, "save_intermediate", False):
+                    os.remove(results_file)
+                    logger.info(f"🗑️ Cleaned up results file: {results_file}")
+            except Exception as e:
+                logger.warning(f"Warning: Could not clean up temporary files: {e}")
+
+        return successes, failures

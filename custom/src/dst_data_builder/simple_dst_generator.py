@@ -1,13 +1,12 @@
 import json
-import os
+import asyncio
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
 from omegaconf import DictConfig, OmegaConf
 import hydra
 from hydra.core.hydra_config import HydraConfig
 import logging
 
-from dst_data_builder.datatypes.dst_output import DSTOutput
 from dst_data_builder.gpt_generators.gpt_generator_factory import GPTGeneratorFactory
 from dst_data_builder.data_sources.dst_data_module import DSTDataModule
 
@@ -17,35 +16,35 @@ class SimpleDSTGenerator:
 
     def __init__(self, cfg: DictConfig):
         self.cfg = cfg
-
-        # Get API key from environment variable
+        self.logger = logging.getLogger(__name__)
 
         generator_type = cfg.generator.type
-
-        print(f"🔧 Using GPT generator type: {generator_type}")
+        self.logger.info("🔧 Using GPT generator type: %s", generator_type)
 
         # Initialize GPT generator using factory
+        gen_cfg = cfg.get("generator", {}) or {}
+        
         self.gpt_generator = GPTGeneratorFactory.create_generator(
             generator_type=generator_type,
             model_name=cfg.model.name,
             temperature=cfg.model.temperature,
-            max_tokens=cfg.model.max_tokens
+            max_tokens=cfg.model.max_tokens,
+            max_retries=cfg.max_retries,
+            generator_cfg=gen_cfg,
         )
-        self.logger = logging.getLogger(__name__)
 
-
-    def run(self, cfg: DictConfig) -> None:
+    async def run(self, cfg: DictConfig) -> None:
         """Run the DST generation process with the given configuration"""
-        # Instantiate data module from cfg (defaults to 'manual')
+        # Instantiate data module from cfg
         ds_cfg = cfg.get("data_source", {}) or {}
         ds_name = ds_cfg.get("name", "manual")
-        print(f"📦 Using data module: {ds_name}")
+        self.logger.info("📦 Using data module: %s", ds_name)
 
         # Create data module with configuration
         data_module = DSTDataModule(
             data_source_name=ds_name,
             data_source_cfg=ds_cfg,
-            batch_size=1,  # Process one file at a time
+            batch_size=1,
             shuffle=False,
             num_workers=0,
         )
@@ -54,85 +53,71 @@ class SimpleDSTGenerator:
         hydra_cfg = HydraConfig.get()
         hydra_output_dir = hydra_cfg.runtime.output_dir
 
-        print(f"📁 Current working directory: {Path.cwd()}")
-        print(f"📁 Hydra output directory: {hydra_output_dir}")
-        print(
-            f"📁 Hydra output directory (absolute): {Path(hydra_output_dir).resolve()}"
-        )
+        self.logger.info("📁 Hydra output directory: %s", Path(hydra_output_dir).resolve())
 
-        # Create a subdirectory for DST outputs within the Hydra run directory
+        # Create output directory
         dst_output_dir = Path(hydra_output_dir) / "dst_outputs"
         dst_output_dir.mkdir(exist_ok=True, parents=True)
 
-        print(f"📁 DST output directory: {dst_output_dir}")
-        print(f"📁 DST output directory (absolute): {dst_output_dir.resolve()}")
+        self.logger.info("📁 DST output directory: %s", dst_output_dir.resolve())
 
-        # Get dataloader (lazy initialization)
-        dataloader = data_module.dataloader
-
-        print(f"🚀 Processing {len(dataloader)} batches from data module {ds_name}...")
-
-        # Prefer to use data_module.get_file_paths() so generator implementations
+        # Get file paths to process
         file_paths = data_module.get_file_paths()
-        if not len(file_paths):
+        if not file_paths:
             self.logger.warning("No input files found by data module; nothing to process")
             raise ValueError("No input files found")
 
+        self.logger.info("📥 Found %d input files to process", len(file_paths))
 
-        print(f"📥 Found {len(file_paths)} input files to process")
+        # Let the generator handle batch processing and incremental saving
+        batch_size = cfg.generator.get("batch_size", 5)
+        processed, failed = await self.gpt_generator.generate_and_save_dst_outputs(
+            file_paths=[str(fp) for fp in file_paths],
+            dst_output_dir=dst_output_dir,
+            batch_size=batch_size
+        )
 
+        # Save summary
+        self._save_summary(dst_output_dir, len(file_paths), processed, failed, ds_name)
+
+        self.logger.info("=== Summary ===")
+        self.logger.info("✅ Processed: %d", processed)
+        self.logger.info("❌ Failed: %d", failed)
+        self.logger.info("📁 Output directory: %s", dst_output_dir)
+
+    def _save_summary(self, dst_output_dir: Path, total_files: int, processed: int, failed: int, ds_name: str) -> None:
+        """Save generation summary to file."""
         try:
-            outputs = self.gpt_generator.generate_dst_outputs(list(file_paths))
+            summary_file = dst_output_dir / "generation_summary.json"
+            summary = {
+                "total_files": total_files,
+                "processed": processed,
+                "failed": failed,
+                "timestamp": str(datetime.now()),
+                "config": {
+                    "data_source": ds_name,
+                    "model": self.gpt_generator.model_name,
+                    "max_retries": self.gpt_generator.max_retries
+                }
+            }
+            with open(summary_file, "w") as f:
+                json.dump(summary, f, indent=2)
+            self.logger.info("📊 Saved summary: %s", summary_file)
         except Exception as e:
-            self.logger.exception(f"Generator raised an exception during processing: {e}")
-            raise
-
-        processed = 0
-        failed = 0
-
-        for input_path, result in outputs.items():
-            out_name = f"dst_{Path(input_path).name}"
-            out_file = dst_output_dir / out_name
-
-            if result is None:
-                self.logger.warning(f"Generation failed for {input_path}")
-                failed += 1
-                continue
-
-            # result may already be a DSTOutput dataclass or a plain dict
-            try:
-                if hasattr(result, "to_dict"):
-                    payload = result.to_dict()
-                else:
-                    payload = result
-
-                with open(out_file, "w") as f:
-                    json.dump(payload, f, indent=2)
-
-                print(f"✅ Saved: {out_file}")
-                processed += 1
-
-            except Exception as e:
-                self.logger.exception(f"Failed to save output for {input_path}: {e}")
-                failed += 1
-
-        print("=== Summary ===")
-        print(f"✅ Processed: {processed}")
-        print(f"❌ Failed: {failed}")
-        print(f"📁 Output directory: {dst_output_dir}")
-
+            self.logger.exception("Failed to save summary: %s", e)
 
 
 @hydra.main(config_path="../../config", config_name="simple_dst_generator", version_base=None)
-def main(cfg: DictConfig):
+def main(cfg: DictConfig) -> None:
     """Main function with Hydra configuration"""
-    print("🚀 Starting Simple DST Generator with Hydra configuration...")
-    print(f"Configuration: {OmegaConf.to_yaml(cfg)}")
+    logger = logging.getLogger(__name__)
+    logger.info("🚀 Starting Simple DST Generator with Hydra configuration...")
+    logger.info("Configuration:\n%s", OmegaConf.to_yaml(cfg))
 
     generator = SimpleDSTGenerator(cfg)
 
     # Use the generator's run() method which reads the data_source config (data_path)
-    generator.run(cfg)
+    asyncio.run(generator.run(cfg))
 
 
 if __name__ == "__main__":

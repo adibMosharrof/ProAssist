@@ -18,7 +18,7 @@ echo -e "${BLUE}║   Simple DST Generator Runner         ║${NC}"
 echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
 echo ""
 
-# Try to load common user shell profile files so environment variables (like OPENAI_API_KEY) are available
+# Try to load common user shell profile files so environment variables (like OPENROUTER_API_KEY) are available
 # Source multiple possible files (.bash_profile, .bashrc, .profile, .bash_login)
 profile_files=("$HOME/.bash_profile" "$HOME/.bashrc" "$HOME/.profile" "$HOME/.bash_login")
 for pf in "${profile_files[@]}"; do
@@ -45,20 +45,20 @@ if [ "$HOME" != "$LOGNAME" ] || true; then
     fi
 fi
 
-# Show a masked presence check for OPENAI_API_KEY to help debug missing key issues
-if [ -n "$OPENAI_API_KEY" ]; then
+# Show a masked presence check for OPENROUTER_API_KEY to help debug missing key issues
+if [ -n "$OPENROUTER_API_KEY" ]; then
     # Mask the key (first 6 and last 4 chars)
-    key_masked="${OPENAI_API_KEY:0:6}...${OPENAI_API_KEY: -4}"
-    echo -e "${GREEN}🔑 OPENAI_API_KEY found: ${key_masked}${NC}"
+    key_masked="${OPENROUTER_API_KEY:0:6}...${OPENROUTER_API_KEY: -4}"
+    echo -e "${GREEN}🔑 OPENROUTER_API_KEY found: ${key_masked}${NC}"
 else
-    echo -e "${YELLOW}⚠️ OPENAI_API_KEY not found in environment after sourcing common profile files.${NC}"
-    echo -e "${YELLOW}Check where you export the key (e.g. ~/.bashrc, ~/.bash_profile) and ensure it's exported with 'export OPENAI_API_KEY=...'.${NC}"
+    echo -e "${YELLOW}⚠️ OPENROUTER_API_KEY not found in environment after sourcing common profile files.${NC}"
+    echo -e "${YELLOW}Check where you export the key (e.g. ~/.bashrc, ~/.bash_profile) and ensure it's exported with 'export OPENROUTER_API_KEY=...'.${NC}"
 fi
 
-# Check if OPENAI_API_KEY is set
-if [ -z "$OPENAI_API_KEY" ]; then
-    echo -e "${RED}❌ Error: OPENAI_API_KEY environment variable is not set${NC}"
-    echo -e "${YELLOW}Please set it using: export OPENAI_API_KEY='your-api-key' or add it to ~/.bash_profile${NC}"
+# Check if OPENROUTER_API_KEY is set
+if [ -z "$OPENROUTER_API_KEY" ]; then
+    echo -e "${RED}❌ Error: OPENROUTER_API_KEY environment variable is not set${NC}"
+    echo -e "${YELLOW}Please set it using: export OPENROUTER_API_KEY='your-api-key' or add it to ~/.bash_profile${NC}"
     exit 1
 fi
 

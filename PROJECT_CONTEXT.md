@@ -32,7 +32,7 @@ python -m venv .venv
 2. Set your OpenAI API key in the environment (required for actual generation):
 
 ```bash
-export OPENAI_API_KEY="sk-..."
+export OPENROUTER_API_KEY="sk-..."
 ```
 
 3. Run the generator via the runner (recommended):

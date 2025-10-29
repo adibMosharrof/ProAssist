@@ -39,9 +39,9 @@ class DataSourceFactory:
             return ManualDSTDataset(data_path=data_path, num_rows=num_rows)
 
         if name in ("proassist", "proassist_raw"):
-            data_path = cfg.get("proassist_dir", "data/proassist")
+            data_path = cfg.get("data_path") 
             num_rows = cfg.get("num_rows", None)
-            datasets = cfg.get("datasets", None)
+            datasets = cfg.get("datasets", [])
             return ProAssistDSTDataset(
                 data_path=data_path, num_rows=num_rows, datasets=datasets
             )

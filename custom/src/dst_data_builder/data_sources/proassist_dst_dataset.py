@@ -32,14 +32,10 @@ class ProAssistDSTDataset(BaseDSTDataset):
             items = []
         else:
             if self.datasets:
-                # Look into processed_data/<dataset>/generated_dialogs/<split>
+                # Look into <dataset>/generated_dialogs/<split>
+                # (assumes base_dir already points to processed_data)
                 for dataset_name in self.datasets:
-                    dataset_path = (
-                        self.base_dir
-                        / "processed_data"
-                        / dataset_name
-                        / "generated_dialogs"
-                    )
+                    dataset_path = self.base_dir / dataset_name / "generated_dialogs"
                     if dataset_path.exists():
                         for split in ["train", "val", "test"]:
                             split_path = dataset_path / split

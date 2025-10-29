@@ -1,0 +1,4 @@
+name: anthropic/claude-sonnet-4.5
+temperature: 0.1
+max_tokens: 4000
+log_name: claude4_5

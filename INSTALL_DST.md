@@ -9,7 +9,7 @@
 
 2. **Set OpenAI API key (optional):**
    ```bash
-   export OPENAI_API_KEY='your-api-key-here'
+   export OPENROUTER_API_KEY='your-api-key-here'
    ```
    
    *Note: Without API key, system uses fallback DST generation*

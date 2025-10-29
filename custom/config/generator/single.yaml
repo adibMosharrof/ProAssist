@@ -1,4 +1,4 @@
 # Single generator settings (merged under `generator`)
 type: single
-batch_size: 1
+batch_size: 20
 save_intermediate: true

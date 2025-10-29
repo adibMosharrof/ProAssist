@@ -1,0 +1,19 @@
+{
+    "model": "cline:cline/code-supernova",
+    "instructions": [
+        "Before writing any code, check for common mistakes:",
+        "- Never use relative imports with dot notation (e.g. `from .module import x`). Always use absolute imports like `from my_package.module import x`.",
+        "- Use proper Python package paths compatible with my workspace structure.",
+        "- Always verify file references match the actual directory layout.",
+        "- Use explicit return statements, no implicit None returns.",
+        "- Avoid writing unnecessary try/except blocks around simple code.",
+        "- Use consistent 4-space indentation and PEP8 style.",
+        "- When editing existing code, preserve docstrings and comments.",
+        "- Try to keep the README.md file up to date with any changes made to the code."
+    ],
+    "tools": {
+        "enable_terminal": true,
+        "enable_code_edits": true,
+        "enable_browser": false
+    }
+}

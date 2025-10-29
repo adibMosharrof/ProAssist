@@ -1,10 +1,10 @@
-name: manual
+name: proassist
 data_path: data/proassist/processed_data
-num_rows: 3
+num_rows: 5000
 datasets: 
   - assembly101
-  # - ego4d
-  # - egoexolearn
-  # - epickitchens
-  # - holoassist
-  # - wtag
+  - ego4d
+  - egoexolearn
+  - epickitchens
+  - holoassist
+  - wtag

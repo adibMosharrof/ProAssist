@@ -20,7 +20,7 @@ def test_timestamps_validator_pass_and_fail():
     valid_dst = {"steps": [{"step_id": "S1", "name": "Step 1", "timestamps": {"start_ts": 0, "end_ts": 1}}]}
     invalid_dst = {"steps": [{"step_id": "S1", "name": "Step 1", "timestamps": {"start_ts": 5, "end_ts": 1}}]}
 
-    vt = TimestampsValidator()
+    vt = TimestampsValidator(enable_post_processing=False)
     ok, msg = vt.validate(valid_dst)
     assert ok
 
@@ -80,7 +80,7 @@ def test_id_validator_duplicate_fail():
     v = IdValidator()
     ok, msg = v.validate(dst)
     assert not ok
-    assert "Duplicate id" in msg
+    assert "duplicate" in msg.lower()
 
 
 def test_id_validator_bad_format_and_parent_mismatch():

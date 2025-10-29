@@ -6,6 +6,5 @@ build-backend = "setuptools.build_meta"
 name = "dst-data-builder"
 version = "0.0.1"
 
-[tool.setuptools]
-package-dir = {"" = "custom/src"}
-packages = ["dst_data_builder", "dst_data_builder.gpt_generators"]
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
