@@ -1,0 +1,12 @@
+# Sanity Check Generator Configuration
+# Uses ground truth dialogues as predictions for pipeline validation
+
+type: sanity_check
+runner_type: sanity_check
+
+# No model needed (ground truth passthrough)
+# No prompts needed
+
+# Context handling (not used in sanity check)
+context_handling_method: "none"
+use_gt_context: false

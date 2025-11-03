@@ -14,6 +14,8 @@ from transformers import (
 )
 
 from mmassist.eval.runners.stream_inference import FrameOutput
+from prospect.context_strategies.context_strategy_factory import ContextStrategyFactory
+from prospect.context_strategies import BaseContextStrategy
 
 
 logger = logging.getLogger(__name__)
@@ -43,6 +45,8 @@ class VLMStreamRunner:
         not_talk_threshold: float = 0.5,
         use_gt_substeps: bool = True,
         cache_dir: Optional[str] = None,
+        context_strategy_type: str = "none",
+        context_strategy_config: Optional[Dict] = None,
         **kwargs,
     ):
         """
@@ -63,6 +67,8 @@ class VLMStreamRunner:
             not_talk_threshold: Threshold for silence
             use_gt_substeps: Use ground truth substeps (True for baseline)
             cache_dir: HuggingFace cache directory
+            context_strategy_type: Type of context overflow handling (none, drop_all, drop_middle, summarize_and_drop)
+            context_strategy_config: Additional config for context strategy
         """
         self.model_name = model_name
         self.eval_name = eval_name
@@ -76,6 +82,20 @@ class VLMStreamRunner:
         self.fps = fps
         self.not_talk_threshold = not_talk_threshold
         self.use_gt_substeps = use_gt_substeps
+        
+        # Context strategy for KV cache management
+        self.context_strategy: Optional[BaseContextStrategy] = None
+        if context_strategy_type and context_strategy_type != "none":
+            strategy_config = context_strategy_config or {}
+            self.context_strategy = ContextStrategyFactory.create_strategy(
+                strategy_type=context_strategy_type,
+                max_seq_len=kwargs.get('max_seq_len', 4096),
+                reserved_seq_len=kwargs.get('reserved_seq_len', 128),
+                **strategy_config
+            )
+            logger.info(f"Context strategy enabled: {self.context_strategy.name}")
+        else:
+            logger.info("No context strategy (stateless processing)")
 
         logger.info(f"Loading VLM model: {model_name}")
         logger.info(f"Device: {device}, dtype: {torch_dtype}")
@@ -111,6 +131,17 @@ class VLMStreamRunner:
         # State tracking for transitions
         self.prev_substep = None
         self.current_substep = None
+        
+        # KV cache state (for context accumulation)
+        self.past_key_values = None
+        self.last_msg_tokens = None
+        self.initial_kv_cache = None  # For drop_middle strategy
+        self.use_kv_cache = kwargs.get('use_kv_cache', False)
+        
+        if self.use_kv_cache:
+            logger.info("KV cache accumulation ENABLED")
+        else:
+            logger.info("KV cache accumulation DISABLED (stateless mode)")
 
     def run_inference_on_video(
         self, video: Dict[str, Any], output_dir: str = "", **kwargs
@@ -135,10 +166,17 @@ class VLMStreamRunner:
         dst_annotations = video.get("dst_annotations")
 
         logger.info(f"Running inference on video {video_id}: {len(frames)} frames")
+        if self.use_kv_cache:
+            logger.info("KV cache accumulation: ENABLED")
+        else:
+            logger.info("KV cache accumulation: DISABLED (stateless)")
 
         # Reset state for new video
         self.prev_substep = None
         self.current_substep = None
+        self.past_key_values = None
+        self.last_msg_tokens = None
+        self.initial_kv_cache = None
 
         outputs = []
 
@@ -157,9 +195,17 @@ class VLMStreamRunner:
 
             # Generate dialogue if transition
             if is_transition:
-                dialogue = self._generate_dialogue(
-                    frame, self.prev_substep, curr_substep
-                )
+                if self.use_kv_cache:
+                    # Generate with KV cache accumulation
+                    dialogue = self._generate_dialogue_with_cache(
+                        frame, self.prev_substep, curr_substep
+                    )
+                else:
+                    # Generate without KV cache (stateless)
+                    dialogue = self._generate_dialogue(
+                        frame, self.prev_substep, curr_substep
+                    )
+                
                 logger.debug(
                     f"Frame {frame_idx} ({timestamp:.1f}s): Transition "
                     f"{self.prev_substep} → {curr_substep}: {dialogue}"
@@ -183,6 +229,11 @@ class VLMStreamRunner:
 
             # Update state
             self.prev_substep = curr_substep
+            
+            # Log KV cache size if enabled
+            if self.use_kv_cache and frame_idx % 50 == 0:
+                cache_len = self._get_cache_length()
+                logger.debug(f"Frame {frame_idx}: KV cache size = {cache_len} tokens")
 
         # Count generated dialogues
         num_dialogues = sum(1 for o in outputs if o.gen != "")
@@ -263,7 +314,7 @@ class VLMStreamRunner:
             # Decode and clean up
             dialogue = self.processor.decode(outputs[0], skip_special_tokens=True)
 
-            # Remove the prompt from the output
+            # Remove the prompt if it's in the output
             # The model often repeats the prompt, so we need to clean it
             # Split by "Assistant:" and take the last part
             if "Assistant:" in dialogue:
@@ -278,6 +329,124 @@ class VLMStreamRunner:
         except Exception as e:
             logger.warning(f"VLM dialogue generation failed: {e}")
             return ""
+    
+    def _generate_dialogue_with_cache(
+        self, frame: Image.Image, prev_substep: str, curr_substep: str
+    ) -> str:
+        """
+        Generate dialogue with KV cache accumulation.
+        
+        This method maintains past_key_values across generations,
+        allowing the model to have context from previous frames.
+        """
+        prompt = self.dialogue_generation_prompt.format(
+            prev_substep=prev_substep, curr_substep=curr_substep
+        )
+
+        try:
+            # Prepare inputs (frame + prompt)
+            inputs = self.processor(images=frame, text=prompt, return_tensors="pt")
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+            with torch.no_grad():
+                # Generate with KV cache accumulation
+                # Note: past_key_values contains history from previous generations
+                result = self.model.generate(
+                    **inputs,
+                    past_key_values=self.past_key_values,
+                    max_new_tokens=self.max_new_tokens,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    do_sample=self.do_sample,
+                    use_cache=True,
+                    return_dict_in_generate=True,
+                )
+                
+                # Extract output and updated cache
+                output_ids = result.sequences
+                self.past_key_values = result.past_key_values
+
+            # Decode dialogue
+            dialogue = self.processor.decode(output_ids[0], skip_special_tokens=True)
+
+            # Clean up prompt leakage
+            if "Assistant:" in dialogue:
+                dialogue = dialogue.split("Assistant:")[-1].strip()
+            if prompt in dialogue:
+                dialogue = dialogue.replace(prompt, "").strip()
+            
+            dialogue = dialogue.strip()
+            
+            # Store initial cache for drop_middle strategy
+            if self.initial_kv_cache is None and self.past_key_values is not None:
+                self.initial_kv_cache = self.past_key_values
+                if hasattr(self.context_strategy, 'set_initial_cache'):
+                    self.context_strategy.set_initial_cache(self.past_key_values)
+                    logger.debug("Stored initial KV cache for drop_middle strategy")
+
+            # Check for overflow and apply context strategy
+            if self.context_strategy:
+                cache_len = self._get_cache_length()
+                if self.context_strategy.should_reduce_cache(cache_len):
+                    logger.info(
+                        f"KV cache overflow: {cache_len} tokens, "
+                        f"applying {self.context_strategy.name} strategy"
+                    )
+                    self._apply_context_strategy(inputs)
+
+            return dialogue
+
+        except Exception as e:
+            logger.warning(f"VLM dialogue generation with cache failed: {e}")
+            return ""
+    
+    def _get_cache_length(self) -> int:
+        """Get current KV cache sequence length"""
+        if self.past_key_values is None:
+            return 0
+        # past_key_values: tuple of (keys, values) per layer
+        # Shape: [batch, num_heads, seq_len, head_dim]
+        return self.past_key_values[0][0].shape[2]
+    
+    def _apply_context_strategy(self, current_frame_inputs: Dict):
+        """Apply context overflow strategy"""
+        if not self.context_strategy:
+            return
+        
+        # Prepare context for strategy
+        context = {
+            'model': self.model,
+            'processor': self.processor,
+            'current_frame': current_frame_inputs,
+            'num_frames': 1,
+        }
+        
+        # For summarize_and_drop, we need a chat formatter
+        # Since we're using standard HF processor, we'll create a simple one
+        if hasattr(self.context_strategy, '_generate_summary'):
+            # Create a simple chat formatter for summarization
+            class SimpleChatFormatter:
+                @staticmethod
+                def apply_chat_template(messages):
+                    # Simple template for system messages
+                    if messages and messages[0].get("role") == "system":
+                        return messages[0]["content"]
+                    return ""
+            
+            context['chat_formatter'] = SimpleChatFormatter()
+        
+        # Apply strategy
+        self.past_key_values, self.last_msg_tokens = \
+            self.context_strategy.handle_overflow(
+                self.past_key_values,
+                self.last_msg_tokens,
+                **context
+            )
+        
+        logger.info(
+            f"After {self.context_strategy.name}: "
+            f"KV cache = {self._get_cache_length()} tokens"
+        )
 
     def _get_reference_dialogue(
         self, conversation: List[Dict], timestamp: float

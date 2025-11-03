@@ -21,6 +21,11 @@ dialogue_generation_prompt: |
 use_gt_substeps: true  # Use ground truth substeps for baseline (Day 1)
 # For Day 2 DST-enhanced, we'll predict substeps from VLM
 
-# Context handling
+# KV cache accumulation
+use_kv_cache: false  # Set to true to enable KV cache accumulation across frames
+max_seq_len: 4096    # Maximum sequence length before overflow
+reserved_seq_len: 128  # Reserved tokens for new input
+
+# Context handling (legacy - kept for compatibility)
 context_handling_method: "summarize_and_drop"
 use_gt_context: false

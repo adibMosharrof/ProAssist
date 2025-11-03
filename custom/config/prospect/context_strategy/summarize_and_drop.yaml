@@ -1,0 +1,10 @@
+# Summarize and Drop Context Strategy
+# Generate text summary of progress, then drop all KV cache
+
+type: summarize_and_drop
+
+# Maximum length for generated summary
+summary_max_length: 512
+
+# Prompt for summarization
+summary_prompt: "Summarize the task progress so far, including what has been completed and what is currently being worked on."

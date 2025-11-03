@@ -18,6 +18,12 @@ echo -e "${BLUE}║   PROSPECT Evaluator Runner           ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
 echo ""
 
+# Source bash profile to set correct HOME directory
+if [ -f ~/.bash_profile ]; then
+    source ~/.bash_profile
+    echo -e "${GREEN}✅ Sourced ~/.bash_profile (HOME: $HOME)${NC}"
+fi
+
 # Get the directory where the script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 

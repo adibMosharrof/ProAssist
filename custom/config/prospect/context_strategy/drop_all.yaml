@@ -1,0 +1,6 @@
+# Drop All Context Strategy
+# Simplest strategy: drop everything when overflow occurs
+
+type: drop_all
+
+# No additional parameters needed for this strategy

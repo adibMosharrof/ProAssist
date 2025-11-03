@@ -1,0 +1,7 @@
+# No Context Strategy
+# For baseline: no KV cache accumulation, stateless processing
+
+type: none
+
+# This is used when each frame is processed independently
+# No overflow handling needed

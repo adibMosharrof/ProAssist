@@ -4,6 +4,7 @@ defaults:
   - data_source: proassist_dst
   - generator: baseline
   - model: smolvlm2
+  - context_strategy: none
 
 # Evaluation settings
 fps: 2
@@ -37,4 +38,4 @@ logging:
 hydra:
   run:
     # dir: custom/outputs/prospect/${now:%Y-%m-%d}/${now:%H-%M-%S}_${model.log_name}_${generator.type}_${exp_name}
-    dir: custom/outputs/prospect/${now:%Y-%m-%d}/${now:%H-%M-%S}_${model.log_name}_${generator.type}
+    dir: custom/outputs/prospect/${now:%Y-%m-%d}/${now:%H-%M-%S}_${model.log_name}_${generator.type}_${context_strategy.type}

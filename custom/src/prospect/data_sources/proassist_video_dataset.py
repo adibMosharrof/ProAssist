@@ -120,8 +120,14 @@ class ProAssistVideoDataset(Dataset):
 
     def _load_single_video(self, video_id: str) -> VideoSample:
         """Load a single video sample"""
-        # Load DST annotations
-        dst_df = self._load_dst_tsv(video_id)
+        # Load DST annotations (optional - may not exist for all videos)
+        try:
+            dst_df = self._load_dst_tsv(video_id)
+        except FileNotFoundError:
+            logger.debug(
+                f"No DST annotations found for {video_id}, using empty DataFrame"
+            )
+            dst_df = pd.DataFrame()
 
         # Load frames
         frames, frame_indices, timestamps = self._load_frames(video_id)
@@ -193,11 +199,47 @@ class ProAssistVideoDataset(Dataset):
         return images, frame_indices, timestamps
 
     def _load_dialogues(self, video_id: str) -> List[Dict]:
-        """Load ground truth dialogues (optional for evaluation)"""
+        """Load ground truth dialogues from val_filtered.json"""
         if not self.dialogue_path or not self.dialogue_path.exists():
             logger.debug("No dialogue path provided, skipping ground truth dialogues")
             return []
 
+        # Try loading from val_filtered.json first (for sanity check / ground truth)
+        dialogue_file = Path(self.dialogue_path) / "val_filtered.json"
+        if dialogue_file.exists():
+            try:
+                with open(dialogue_file) as f:
+                    data = json.load(f)
+
+                # Find entry matching video_id
+                # video_uid format: "assembly_nusar-2021_action_both_9011-c03f_..."
+                # video_id format: "9011-c03f"
+                for entry in data:
+                    video_uid = entry.get("video_uid", "")
+                    if video_id in video_uid:
+                        # Extract assistant dialogues with timestamps
+                        dialogues = []
+                        for conv_obj in entry.get("conversations", []):
+                            for turn in conv_obj.get("conversation", []):
+                                if turn.get("role") == "assistant":
+                                    dialogues.append(
+                                        {
+                                            "time": turn.get("time", 0),
+                                            "content": turn.get("content", ""),
+                                            "labels": turn.get("labels", ""),
+                                        }
+                                    )
+
+                        if dialogues:
+                            logger.debug(
+                                f"Loaded {len(dialogues)} ground truth dialogues from val_filtered.json"
+                            )
+                            return dialogues
+
+            except Exception as e:
+                logger.warning(f"Failed to load from val_filtered.json: {e}")
+
+        # Fallback: Try loading from individual JSON files
         dialogue_files = list(self.dialogue_path.glob(f"*{video_id}*.json"))
 
         if not dialogue_files:
@@ -220,12 +262,12 @@ class ProAssistVideoDataset(Dataset):
             if turn.get("from") == "assistant":
                 dialogues.append(
                     {
-                        "timestamp": turn.get("timestamp", 0),
+                        "time": turn.get("timestamp", 0),
                         "content": turn.get("value", ""),
                     }
                 )
 
-        logger.debug(f"Loaded {len(dialogues)} ground truth dialogues")
+        logger.debug(f"Loaded {len(dialogues)} ground truth dialogues from fallback")
         return dialogues
 
     def __len__(self) -> int:
@@ -248,8 +290,14 @@ class ProAssistVideoDataset(Dataset):
         sample = self.samples[idx]
 
         # Convert ground truth dialogues to conversation format
+        # Format compatible with both ProAssist evaluator and VLM runner
         conversation = [
-            {"from": "assistant", "value": d["content"], "timestamp": d["timestamp"]}
+            {
+                "from": "assistant",
+                "timestamp": d["time"],
+                "value": d["content"],
+                "labels": d.get("labels", ""),
+            }
             for d in sample.ground_truth_dialogues
         ]
 

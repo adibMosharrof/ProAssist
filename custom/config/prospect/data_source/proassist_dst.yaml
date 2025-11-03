@@ -2,7 +2,7 @@
 
 name: proassist_dst
 data_path: data/proassist/processed_data/assembly101
-dst_annotation_path: data/proassist_dst_manual_data
+dst_annotation_path: data/proassist_dst_manual_data/assembly101
 dialogue_path: data/proassist/processed_data/assembly101/generated_dialogs
 frame_dir: frames
 fps: 2

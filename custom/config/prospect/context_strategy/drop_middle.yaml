@@ -1,0 +1,7 @@
+# Drop Middle Context Strategy
+# Keep initial context + recent context, drop middle
+
+type: drop_middle
+
+# Number of recent tokens to keep
+last_keep_len: 512
