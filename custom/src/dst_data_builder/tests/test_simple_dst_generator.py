@@ -176,7 +176,7 @@ class TestSimpleDSTGenerator:
             test_file.write_text(json.dumps(incomplete_data))
 
             # Should handle missing fields gracefully
-            results = await generator.gpt_generator.generate_dst_outputs([str(test_file)])
+            results, failure_info = await generator.gpt_generator.generate_dst_outputs([str(test_file)])
             assert str(test_file) in results
             # Result should be None for invalid input
             assert results[str(test_file)] is None
@@ -223,7 +223,7 @@ class TestSimpleDSTGenerator:
             generator.gpt_generator._attempt_dst_generation = fake_attempt
 
             # Generate DST
-            results = await generator.gpt_generator.generate_dst_outputs([str(test_file)])
+            results, failure_info = await generator.gpt_generator.generate_dst_outputs([str(test_file)])
             
             assert str(test_file) in results
             dst_output = results[str(test_file)]

@@ -194,6 +194,29 @@ class BaseGPTGenerator(ABC):
             self.logger.exception("Failed to save output for %s: %s", input_path, e)
             return False
 
+    def _save_failed_response(self, raw_response: str, input_path: str, error_reason: str, dst_output_dir: Path) -> None:
+        """Save raw response for failed JSON parsing to enable later analysis."""
+        try:
+            # Create a subdirectory for failed responses
+            failed_dir = dst_output_dir / "failed_responses"
+            failed_dir.mkdir(exist_ok=True)
+            
+            # Save the raw response
+            out_name = f"failed_{Path(input_path).stem}.txt"
+            out_file = failed_dir / out_name
+            
+            with open(out_file, "w", encoding="utf-8") as f:
+                f.write(f"=== FAILURE INFO ===\n")
+                f.write(f"Input file: {input_path}\n")
+                f.write(f"Error: {error_reason}\n")
+                f.write(f"\n=== RAW RESPONSE ===\n")
+                f.write(raw_response)
+            
+            self.logger.debug("💾 Saved failed response: %s", out_file)
+            
+        except Exception as e:
+            self.logger.error("Failed to save failed response for %s: %s", input_path, e)
+
     async def generate_and_save_dst_outputs(
         self, 
         file_paths: List[str], 
@@ -220,6 +243,9 @@ class BaseGPTGenerator(ABC):
         failed = 0
         remaining_files = list(file_paths)
         
+        # Track failure info for saving raw responses
+        failure_info: Dict[str, Tuple[str, Any]] = {}  # {input_path: (error_reason, raw_content)}
+        
         for attempt in range(self.max_retries + 1):
             if not remaining_files:
                 break
@@ -240,7 +266,10 @@ class BaseGPTGenerator(ABC):
                 self.logger.info("🔄 Processing batch %d/%d: %d files", batch_num, total_batches, len(batch_files))
                 
                 try:
-                    batch_outputs = await self.generate_dst_outputs(batch_files)
+                    batch_outputs, batch_failure_info = await self.generate_dst_outputs(batch_files)
+                    
+                    # Update failure info with latest attempts
+                    failure_info.update(batch_failure_info)
                     
                     for input_path in batch_files:
                         result = batch_outputs.get(input_path)
@@ -265,15 +294,35 @@ class BaseGPTGenerator(ABC):
             else:
                 self.logger.info("✅ Attempt %d: All files processed successfully", attempt_num)
 
+        # Save raw responses for all persistent failures
+        json_parse_failures = 0
+        for input_path, (error_reason, raw_content) in failure_info.items():
+            if "JSON Parse Error" in error_reason and raw_content:
+                try:
+                    self._save_failed_response(raw_content, input_path, error_reason, dst_output_dir)
+                    json_parse_failures += 1
+                except Exception as e:
+                    self.logger.error("Failed to save raw response for %s: %s", input_path, e)
+        
+        if json_parse_failures > 0:
+            self.logger.info("💾 Saved %d failed responses to %s/failed_responses/", json_parse_failures, dst_output_dir)
+
         # Log post-processing statistics from validators (only once at the end)
         self._log_validator_statistics()
 
         return processed, failed
 
-    async def generate_dst_outputs(self, file_paths: List[str]) -> Dict[str, Optional[DSTOutput]]:
-        """Read input files, generate DSTs for each, and return DSTOutput mapping."""
+    async def generate_dst_outputs(self, file_paths: List[str]) -> Tuple[Dict[str, Optional[DSTOutput]], Dict[str, Tuple[str, Any]]]:
+        """
+        Read input files, generate DSTs for each, and return DSTOutput mapping.
+        
+        Returns:
+            Tuple of (outputs, failure_info) where:
+            - outputs: Dict mapping input_path to DSTOutput or None
+            - failure_info: Dict mapping input_path to (error_reason, raw_content)
+        """
         items, raw_map = self._read_input_files(file_paths)
-        results = await self.generate_multiple_dst_structures(items)
+        results, failure_info = await self.generate_multiple_dst_structures(items)
 
         outputs: Dict[str, Optional[DSTOutput]] = {}
         for input_file, dst_structure in results.items():
@@ -289,9 +338,9 @@ class BaseGPTGenerator(ABC):
         for input_path in file_paths:
             outputs.setdefault(input_path, None)
 
-        return outputs
+        return outputs, failure_info
 
-    async def generate_multiple_dst_structures(self, items: List[Tuple[str, str, str]]) -> Dict[str, Dict[str, Any]]:
+    async def generate_multiple_dst_structures(self, items: List[Tuple[str, str, str]]) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Tuple[str, Any]]]:
         """
         Generate DST structures for multiple items (single attempt, no retries).
         
@@ -302,9 +351,12 @@ class BaseGPTGenerator(ABC):
             items: List of tuples (input_file, inferred_knowledge, all_step_descriptions)
 
         Returns:
-            Dictionary mapping input_file -> DST structure or None
+            Tuple of (results, failure_info) where:
+            - results: Dictionary mapping input_file -> DST structure or None
+            - failure_info: Dictionary mapping input_file -> (error_reason, raw_content)
         """
         results: Dict[str, Any] = {inp[0]: None for inp in items}
+        failure_info: Dict[str, Tuple[str, Any]] = {}
         failure_reasons: Dict[str, str] = {}
         
         try:
@@ -312,18 +364,20 @@ class BaseGPTGenerator(ABC):
         except Exception as e:
             self.logger.exception("_execute_generation_round raised exception: %s", e)
             # On exception, all items fail
-            return results
+            return results, failure_info
         
         # Apply successes
         for inp, dst in successes.items():
             results[inp] = dst
             
-        # Log failures
+        # Process failures and save their info
         if failures:
             for f in failures:
-                self.logger.warning("Failed: %s - %s", f[0], f[3])
+                input_file, _, _, reason, raw_content = f
+                self.logger.warning("Failed: %s - %s", input_file, reason)
+                failure_info[input_file] = (reason, raw_content)
         
-        return results
+        return results, failure_info
 
     @abstractmethod
     async def _execute_generation_round(

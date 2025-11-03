@@ -4,7 +4,7 @@ from dataclasses import dataclass, field, asdict
 from transformers import HfArgumentParser
 from transformers import TrainingArguments as HFTrainingArguments
 
-DATA_ROOT_DIR = os.environ.get("DATA_ROOT_DIR", "<please_set_me>")
+DATA_ROOT_DIR = os.environ.get("DATA_ROOT_DIR", "data/proassist")
 # raw data dir: {DATA_ROOT_DIR}/datasets
 # processed data dir: {DATA_ROOT_DIR}/processed_data
 

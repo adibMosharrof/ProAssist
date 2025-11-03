@@ -133,6 +133,7 @@ class StreamEvaluator(BaseEvaluator):
                 match_window_time = get_match_time_window(self.dataset_name)
             else:
                 assert isinstance(self.match_window_time, tuple)
+                match_window_time = self.match_window_time
             match_window = tuple(int(t * self.fps) for t in match_window_time)
             match_result = find_match(
                 prediction["predictions"],
@@ -164,6 +165,7 @@ class StreamEvaluator(BaseEvaluator):
                     match_window_time = get_match_time_window(self.dataset_name)
                 else:
                     assert isinstance(self.match_window_time, tuple)
+                    match_window_time = self.match_window_time
                 match_window = tuple(int(t * self.fps) for t in match_window_time)
                 match_result = find_match(
                     [FrameOutput(**p) for p in prediction["predictions"]],
@@ -221,12 +223,18 @@ class StreamEvaluator(BaseEvaluator):
         num_redundant = len(results["redundant"])
         num_total = num_matched_before_filter + num_missed + num_redundant
 
-        J = num_matched / num_total
+        J = num_matched / num_total if num_total > 0 else 0
         metrics["jaccard_index"] = J
 
-        metrics["missing_rate"] = num_missed / (num_matched_before_filter + num_missed)
-        metrics["redundant_rate"] = num_redundant / (
-            num_matched_before_filter + num_redundant
+        metrics["missing_rate"] = (
+            num_missed / (num_matched_before_filter + num_missed)
+            if (num_matched_before_filter + num_missed) > 0
+            else 0
+        )
+        metrics["redundant_rate"] = (
+            num_redundant / (num_matched_before_filter + num_redundant)
+            if (num_matched_before_filter + num_redundant) > 0
+            else 0
         )
 
         matched_semscores = [
@@ -239,8 +247,16 @@ class StreamEvaluator(BaseEvaluator):
         mean_tdiff = np.mean(results["time_diff"]) if results["time_diff"] else 0
         metrics["time_diff"] = mean_tdiff
 
-        p = num_matched / (num_matched_before_filter + num_redundant)
-        r = num_matched / (num_matched_before_filter + num_missed)
+        p = (
+            num_matched / (num_matched_before_filter + num_redundant)
+            if (num_matched_before_filter + num_redundant) > 0
+            else 0
+        )
+        r = (
+            num_matched / (num_matched_before_filter + num_missed)
+            if (num_matched_before_filter + num_missed) > 0
+            else 0
+        )
         f1 = 2 * p * r / (p + r) if p + r > 0 else 0
         metrics["precision"] = p
         metrics["recall"] = r

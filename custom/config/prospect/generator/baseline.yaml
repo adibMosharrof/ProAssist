@@ -1,0 +1,26 @@
+# Baseline Generator Configuration
+
+type: baseline
+runner_type: vlm_stream
+
+# Prompts for VLM
+transition_detection_prompt: |
+  <image>You are observing someone performing a procedural task. Based on the current frame, 
+  predict what substep they are currently performing. Answer with just the substep name, 
+  no explanation needed.
+
+dialogue_generation_prompt: |
+  <image>You are a helpful assistant observing someone perform a procedural task.
+  They just completed: {prev_substep}
+  They are now starting: {curr_substep}
+  
+  Generate a brief, encouraging dialogue to help them with this transition.
+  Be specific and helpful. Keep it under 20 words.
+
+# Transition detection strategy
+use_gt_substeps: true  # Use ground truth substeps for baseline (Day 1)
+# For Day 2 DST-enhanced, we'll predict substeps from VLM
+
+# Context handling
+context_handling_method: "summarize_and_drop"
+use_gt_context: false

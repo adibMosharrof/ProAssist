@@ -26,7 +26,7 @@ async def test_single_generator_retries_on_validator_rejection(monkeypatch, tmp_
 
     monkeypatch.setattr(gen, "_attempt_dst_generation", fake_attempt)
 
-    results = await gen.generate_multiple_dst_structures([item])
+    results, failure_info = await gen.generate_multiple_dst_structures([item])
 
     # Should succeed with valid DST
     assert results["input.json"] is not None

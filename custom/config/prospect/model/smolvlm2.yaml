@@ -1,0 +1,15 @@
+# SmolVLM2 Model Configuration
+
+name: "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
+log_name: "smolvlm2-2.2b"
+device: "cuda"
+torch_dtype: "bfloat16"
+
+# Generation parameters
+max_new_tokens: 100
+temperature: 0.7
+top_p: 0.9
+do_sample: true
+
+# Cache directory (important for your setup)
+cache_dir: "/u/siddique-d1/adib/.cache/huggingface"

@@ -1,0 +1,40 @@
+# PROSPECT Evaluator Configuration
+
+defaults:
+  - data_source: proassist_dst
+  - generator: baseline
+  - model: smolvlm2
+
+# Evaluation settings
+fps: 2
+not_talk_threshold: 0.5
+eval_max_seq_len_str: "4k"
+
+# Matching settings (for ProAssist StreamEvaluator)
+match_window_time: [-15, 15]  # seconds (temporal matching window)
+match_dist_func_factor: 0.3
+match_dist_func_power: 1.5
+match_semantic_score_threshold: 0.5
+
+# STS model for semantic matching
+sts_model_type: "sentence-transformers/all-mpnet-base-v2"
+
+# NLG metrics
+nlg_metrics:
+  - Bleu
+  - CIDEr
+  - METEOR
+
+# Output settings
+exp_name: baseline_run
+
+# Logging
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Hydra configuration
+hydra:
+  run:
+    # dir: custom/outputs/prospect/${now:%Y-%m-%d}/${now:%H-%M-%S}_${model.log_name}_${generator.type}_${exp_name}
+    dir: custom/outputs/prospect/${now:%Y-%m-%d}/${now:%H-%M-%S}_${model.log_name}_${generator.type}

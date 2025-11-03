@@ -279,3 +279,5 @@ A **lightweight, explainable** progress summarizer that:
 - Scales efficiently on **SmolVLM2-2.2B** or similar models.
 
 ---
+
+**End of Document**

@@ -1,0 +1,21 @@
+# ProAssist DST Data Source Configuration
+
+name: proassist_dst
+data_path: data/proassist/processed_data/assembly101
+dst_annotation_path: data/proassist_dst_manual_data
+dialogue_path: data/proassist/processed_data/assembly101/generated_dialogs
+frame_dir: frames
+fps: 2
+
+# Video IDs to evaluate (can override with CLI)
+# Default: single video for quick testing
+video_ids:
+  - "9011-c03f"
+
+# Available videos (for reference):
+# - 9011-c03f (assembly101)
+# - P01_11 (epickitchens)
+# - T48 (wtag)
+# - bee9d8dc-ac78-11ee-819f-80615f12b59e (egoexolearn)
+# - grp-cec778f9-9b54-4b67-b013-116378fd7a85 (ego4d)
+# - R0027-12-GoPro (holoassist)
