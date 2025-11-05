@@ -1,11 +1,11 @@
 """Summarize and drop strategy - generate text summary of context"""
 
 import logging
-from typing import Any, Tuple, Optional, Callable
+from typing import Any, Tuple, Optional, Callable, Dict
 
 import torch
 
-from prospect.context_strategies import BaseContextStrategy
+from prospect.context_strategies.base_strategy import BaseContextStrategy
 
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ class SummarizeAndDropStrategy(BaseContextStrategy):
         max_seq_len: int,
         reserved_seq_len: int = 128,
         summary_max_length: int = 512,
-        summary_prompt: str = "Summarize the task progress so far.",
+        summary_prompt: Optional[Dict[str, str]] = None,
         initial_sys_prompt: Optional[str] = None,
         task_knowledge: Optional[str] = None,
         **kwargs
@@ -46,13 +46,22 @@ class SummarizeAndDropStrategy(BaseContextStrategy):
             max_seq_len: Maximum sequence length
             reserved_seq_len: Reserved tokens for new input
             summary_max_length: Max tokens for generated summary
-            summary_prompt: Prompt for summarization
+            summary_prompt: Structured prompt for summarization (ProAssist-style)
             initial_sys_prompt: Initial system prompt to prepend to summary
             task_knowledge: Task knowledge to append to summary
         """
         super().__init__(max_seq_len, reserved_seq_len, **kwargs)
         self.summary_max_length = summary_max_length
-        self.summary_prompt = summary_prompt
+        
+        # Use structured prompt (ProAssist-style) or fallback to simple dict
+        if summary_prompt is None:
+            self.summary_prompt = {
+                "role": "system", 
+                "content": "Watch the user's actions and track the task progress. Please summarize the progress."
+            }
+        else:
+            self.summary_prompt = summary_prompt
+            
         self.initial_sys_prompt = initial_sys_prompt
         self.task_knowledge = task_knowledge
         
@@ -75,132 +84,164 @@ class SummarizeAndDropStrategy(BaseContextStrategy):
             **context: Must contain:
                 - model: VLM model for generation
                 - processor: Processor for tokenization
-                - current_frame: Current frame being processed
-                - num_frames: Number of frames in current input
                 - chat_formatter: Chat template formatter
                 
         Returns:
             (None, summary_message) - KV cache cleared, summary as new context
         """
-        # Extract required context
-        model = context.get('model')
-        processor = context.get('processor')
-        current_frame = context.get('current_frame')
-        num_frames = context.get('num_frames', 1)
-        chat_formatter = context.get('chat_formatter')
+        # Extract and validate required context
+        required = {'model', 'processor', 'chat_formatter'}
+        missing = required - set(context.keys())
         
-        if not all([model, processor, current_frame, chat_formatter]):
-            logger.error("Missing required context for summarization, falling back to drop all")
-            return None, last_msg
+        if missing:
+            raise ValueError(
+                f"summarize_and_drop strategy missing required context: {missing}. "
+                f"Pass these via compress_cache() kwargs."
+            )
+        
+        model = context['model']
+        processor = context['processor']
+        chat_formatter = context['chat_formatter']
+        trace = context.get('trace', None)  # Get trace if available
+        current_timestamp = context.get('current_timestamp', 0.0)
+        frame_idx = context.get('frame_idx', 0)
         
         try:
             # Generate summary using current frame + all past context
-            summary = self._generate_summary(
+            summary, summary_prompt = self._generate_summary(
                 model=model,
                 processor=processor,
-                current_frame=current_frame,
-                num_frames=num_frames,
                 past_key_values=past_key_values
             )
             
             logger.info(f"Generated summary: {summary}")
             
-            # Optionally prepend initial system prompt
-            if self.initial_sys_prompt:
-                summary = f"{self.initial_sys_prompt} {summary}"
+            # Record summary in trace
+            if trace is not None and hasattr(trace, 'add_summary'):
+                trace.add_summary(
+                    timestamp=current_timestamp,
+                    frame_idx=frame_idx,
+                    summary=summary,
+                    prompt=summary_prompt,  # Record the full prompt used
+                )
             
-            # Optionally append task knowledge
-            if self.task_knowledge:
-                summary = f"{summary} {self.task_knowledge}"
-            
-            # Format as system message
-            summary_msg = chat_formatter.apply_chat_template(
-                [{"role": "system", "content": summary}]
-            )
+            # 3. Format as system message (ProAssist-style)
+            # The summary already includes system context, so just format it
+            last_msg = chat_formatter.apply_chat_template([
+                {"role": "system", "content": summary}
+            ])
             
             logger.debug(
                 f"SUMMARIZE_AND_DROP: Generated {len(summary.split())} word summary, "
                 f"dropped {past_key_values[0][0].shape[2]} tokens"
             )
             
-            # Return None for KV cache (drop everything), summary as new context
-            return None, summary_msg
+            # 5. Reset cache, keep only summary as context (ProAssist-style)
+            return None, last_msg
             
         except Exception as e:
-            logger.error(f"Summarization failed: {e}, falling back to drop all")
-            return None, last_msg
+            logger.error(f"Summarization failed: {e}")
+            raise RuntimeError(f"Failed to generate summary for summarize_and_drop strategy: {e}")
     
     def _generate_summary(
         self,
         model: Any,
         processor: Any,
-        current_frame: Any,
-        num_frames: int,
         past_key_values: Any
-    ) -> str:
+    ) -> Tuple[str, Dict[str, str]]:
         """
-        Generate progress summary using VLM
+        Generate progress summary using ProAssist-style approach
         
-        Args:
-            model: VLM model (standard HuggingFace model)
-            processor: HuggingFace processor
-            current_frame: Current frame's model_inputs dict
-            num_frames: Number of frames
-            past_key_values: KV cache with all history
-            
         Returns:
-            Generated summary text
+            Tuple of (summary_text, prompt_used)
         """
         try:
-            # Prepare summarization prompt with current frame
-            # Use current frame's image but replace text with summary prompt
-            summary_inputs = dict(current_frame)
+            # 1. Build comprehensive summarization prompt (ProAssist-style)
+            # Include system context in the prompt for better summarization
+            prompt_parts = []
             
-            # Create summary prompt tokens
-            summary_text = f"<image>{self.summary_prompt}"
-            summary_tokens = processor(
-                text=summary_text,
-                return_tensors="pt",
-                add_special_tokens=False
-            )["input_ids"]
+            # Add initial system prompt if available
+            if self.initial_sys_prompt:
+                prompt_parts.append(self.initial_sys_prompt)
             
-            # Replace input_ids with summary prompt
-            summary_inputs["input_ids"] = summary_tokens
+            # Add the base summarization instruction
+            if isinstance(self.summary_prompt, dict):
+                base_content = self.summary_prompt.get('content', 'Please summarize the progress.')
+            else:
+                base_content = str(self.summary_prompt)
+            prompt_parts.append(base_content)
             
-            # Move to device
-            summary_inputs = {
-                k: v.to(model.device) if hasattr(v, 'to') else v
-                for k, v in summary_inputs.items()
+            # Add task knowledge if available
+            if self.task_knowledge:
+                prompt_parts.append(self.task_knowledge)
+            
+            # Combine all parts
+            full_prompt_content = " ".join(prompt_parts)
+            
+            # Create the structured message
+            summarization_message = {
+                "role": "system",
+                "content": full_prompt_content
             }
             
-            # Generate summary using accumulated KV cache
-            # Model "sees" all previous frames via past_key_values
+            # Use processor's get_input_sequence with the comprehensive message
+            input_ids, _ = processor.get_input_sequence(
+                num_images=0,  # No images for summarization
+                messages=[summarization_message],
+                first_turn=False
+            )
+            
+            # Prepare model inputs (similar to ProAssist)
+            model_inputs = {
+                "input_ids": input_ids.to(model.device),
+                # Note: In ProAssist, they keep original model_inputs but replace input_ids
+                # You may need to adapt this based on your frame/image handling
+            }
+
+            # 2. Generate summary using ProAssist's generate_progress_summary approach
             with torch.no_grad():
-                result = model.generate(
-                    **summary_inputs,
+                # Use joint_embed to get embeddings (ProAssist pattern)
+                inputs_embeds = model.joint_embed(**model_inputs)
+                
+                # Generate summary using fast_greedy_generate (ProAssist pattern)
+                output_ids, _ = model.fast_greedy_generate(
+                    inputs_embeds=inputs_embeds,
                     past_key_values=past_key_values,
-                    max_new_tokens=self.summary_max_length,
-                    temperature=0.3,
-                    do_sample=False,  # Deterministic for summaries
-                    use_cache=True,
-                    return_dict_in_generate=True,
+                    max_length=self.summary_max_length,
+                    verbose=False,
                 )
             
-            # Decode summary
-            summary_raw = processor.decode(result.sequences[0], skip_special_tokens=True)
+            # 3. Decode the generated summary
+            summary_raw = processor.tokenizer.decode(output_ids[0], skip_special_tokens=True)
             
-            # Clean up
-            if "Assistant:" in summary_raw:
-                summary_raw = summary_raw.split("Assistant:")[-1].strip()
-            if self.summary_prompt in summary_raw:
-                summary_raw = summary_raw.replace(self.summary_prompt, "").strip()
+            # 4. Clean up the summary (remove prompt and assistant prefix)
+            summary = self._clean_summary(summary_raw)
             
-            return summary_raw.strip()
+            return summary.strip(), summarization_message
             
         except Exception as e:
             logger.error(f"Summary generation failed: {e}")
             # Fallback: simple text summary
-            return "Task in progress."
+            fallback_summary = "Task in progress."
+            fallback_prompt = self.summary_prompt if isinstance(self.summary_prompt, dict) else {"role": "system", "content": str(self.summary_prompt)}
+            return fallback_summary, fallback_prompt
+    
+    def _clean_summary(self, summary_raw: str) -> str:
+        """
+        Clean up the generated summary by removing prompts and prefixes
+        """
+        summary = summary_raw
+        
+        # Remove assistant prefix if present
+        if "Assistant:" in summary:
+            summary = summary.split("Assistant:")[-1].strip()
+        
+        # Remove the original prompt if it appears in the response
+        prompt_content = self.summary_prompt.get("content", "")
+        if prompt_content in summary:
+            summary = summary.replace(prompt_content, "").strip()
+        
+        return summary
     
     @property
     def name(self) -> str:

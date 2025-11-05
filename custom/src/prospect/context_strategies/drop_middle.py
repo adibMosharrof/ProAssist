@@ -4,7 +4,7 @@ import logging
 from typing import Any, Tuple, Optional
 import torch
 
-from prospect.context_strategies import BaseContextStrategy
+from prospect.context_strategies.base_strategy import BaseContextStrategy
 
 
 logger = logging.getLogger(__name__)
@@ -103,8 +103,10 @@ class DropMiddleStrategy(BaseContextStrategy):
             (concatenated_kv_cache, last_msg)
         """
         if self.init_kv_cache is None:
-            logger.warning("No initial cache stored, falling back to drop all")
-            return None, last_msg
+            logger.info("No initial cache stored for drop_middle, skipping compression this turn")
+            # Don't return None - just return the original cache unchanged
+            # This avoids breaking generation when initial cache isn't set yet
+            return past_key_values, last_msg
         
         curr_seq_len = past_key_values[0][0].shape[2]
         init_kv_cache_len = self.init_kv_cache[0][0].shape[2]
@@ -141,6 +143,41 @@ class DropMiddleStrategy(BaseContextStrategy):
         )
         
         return new_kv_cache, last_msg
+    
+    def _update_attention_mask(
+        self,
+        attention_mask: Optional[torch.Tensor],
+        old_kv_cache: Any,
+        new_kv_cache: Any
+    ) -> Optional[torch.Tensor]:
+        """
+        Update attention mask for drop_middle strategy.
+        
+        Since we keep initial + recent tokens and drop middle,
+        we need to update the mask accordingly.
+        """
+        if attention_mask is None or new_kv_cache is None:
+            return attention_mask
+        
+        old_seq_len = old_kv_cache[0][0].shape[2]
+        new_seq_len = new_kv_cache[0][0].shape[2]
+        
+        if old_seq_len == new_seq_len:
+            return attention_mask
+        
+        # Keep initial + recent, drop middle (same logic as KV cache)
+        if self.init_kv_cache is None:
+            return attention_mask[:, :new_seq_len]
+        
+        init_kv_cache_len = self.init_kv_cache[0][0].shape[2]
+        
+        # Concatenate initial + recent parts of attention mask
+        new_attention_mask = torch.cat([
+            attention_mask[:, :init_kv_cache_len],
+            attention_mask[:, -self.last_keep_len:]
+        ], dim=1)
+        
+        return new_attention_mask
     
     @property
     def name(self) -> str:

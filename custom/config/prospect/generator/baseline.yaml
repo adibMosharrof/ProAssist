@@ -11,6 +11,8 @@ transition_detection_prompt: |
 
 dialogue_generation_prompt: |
   <image>You are a helpful assistant observing someone perform a procedural task.
+  Using any task progress information and conversation history available in the context,
+  plus the current transition information:
   They just completed: {prev_substep}
   They are now starting: {curr_substep}
   

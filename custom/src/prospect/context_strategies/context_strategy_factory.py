@@ -7,6 +7,7 @@ from prospect.context_strategies import ContextStrategy, BaseContextStrategy
 from prospect.context_strategies.drop_all import DropAllStrategy
 from prospect.context_strategies.drop_middle import DropMiddleStrategy
 from prospect.context_strategies.summarize_and_drop import SummarizeAndDropStrategy
+from prospect.context_strategies.summarize_with_dst import SummarizeWithDSTStrategy
 
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,19 @@ class ContextStrategyFactory:
                 summary_prompt=summary_prompt,
                 initial_sys_prompt=initial_sys_prompt,
                 task_knowledge=task_knowledge,
+                **kwargs
+            )
+        
+        elif strategy_enum == ContextStrategy.SUMMARIZE_WITH_DST:
+            summary_max_length = kwargs.pop('summary_max_length', 512)
+            dst_file = kwargs.pop('dst_file', None)
+            initial_sys_prompt = kwargs.pop('initial_sys_prompt', None)
+            return SummarizeWithDSTStrategy(
+                max_seq_len=max_seq_len,
+                reserved_seq_len=reserved_seq_len,
+                summary_max_length=summary_max_length,
+                dst_file=dst_file,
+                initial_sys_prompt=initial_sys_prompt,
                 **kwargs
             )
         

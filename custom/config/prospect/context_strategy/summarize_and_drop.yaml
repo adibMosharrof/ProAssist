@@ -6,5 +6,13 @@ type: summarize_and_drop
 # Maximum length for generated summary
 summary_max_length: 512
 
-# Prompt for summarization
-summary_prompt: "Summarize the task progress so far, including what has been completed and what is currently being worked on."
+# Structured prompt for summarization (ProAssist-style)
+summary_prompt:
+  role: "system"
+  content: "Watch the user's actions and track the task progress. Please summarize the progress."
+
+# Optional: Initial system prompt to prepend to summary
+# initial_sys_prompt: "You are a proactive assistant helping with task completion."
+
+# Optional: Task knowledge to append to summary
+# task_knowledge: "The task involves assembling components in a specific order."

@@ -3,7 +3,7 @@
 import logging
 from typing import Any, Tuple
 
-from prospect.context_strategies import BaseContextStrategy
+from prospect.context_strategies.base_strategy import BaseContextStrategy
 
 
 logger = logging.getLogger(__name__)
