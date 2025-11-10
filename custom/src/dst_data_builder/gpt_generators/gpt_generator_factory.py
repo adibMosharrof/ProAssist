@@ -2,7 +2,6 @@
 GPT Generator Factory - Creates the appropriate GPT generator based on configuration
 """
 
-import os
 import logging
 from typing import Dict, Any, Optional
 
@@ -12,7 +11,7 @@ from dst_data_builder.validators.id_validator import IdValidator
 from dst_data_builder.gpt_generators.base_gpt_generator import BaseGPTGenerator
 from dst_data_builder.gpt_generators.single_gpt_generator import SingleGPTGenerator
 from dst_data_builder.gpt_generators.batch_gpt_generator import BatchGPTGenerator
-
+from dst_data_builder.gpt_generators.proassist_label_generator import ProAssistDSTLabelGenerator
 
 
 class GPTGeneratorFactory:
@@ -31,11 +30,12 @@ class GPTGeneratorFactory:
         Create a GPT generator based on the specified type
 
         Args:
-            generator_type: Type of generator ("single" or "batch")
-            api_key: OpenAI API key
+            generator_type: Type of generator ("single", "batch", "proassist_label")
             model_name: GPT model name
             temperature: Temperature for GPT responses
             max_tokens: Maximum tokens for GPT responses
+            max_retries: Maximum number of retries
+            generator_cfg: Optional generator-specific configuration
 
         Returns:
             Appropriate GPT generator instance
@@ -45,15 +45,11 @@ class GPTGeneratorFactory:
         """
 
         # Validate generator type
-        if generator_type.lower() not in ["single", "batch"]:
+        valid_types = ["single", "batch", "proassist_label"]
+        if generator_type.lower() not in valid_types:
             raise ValueError(
-                f"Unsupported generator type: {generator_type}. Supported types: 'single', 'batch'"
+                f"Unsupported generator type: {generator_type}. Supported types: {', '.join(valid_types)}"
             )
-        api_key_map = {
-            "single": "OPENROUTER_API_KEY",
-            "batch": "OPENAI_API_KEY",
-        }
-        api_key = os.getenv(api_key_map.get(generator_type.lower()), None)
 
         # Prepare validators if present inside generator_cfg
         validators = None
@@ -67,10 +63,10 @@ class GPTGeneratorFactory:
                 IdValidator(),
             ]
 
-        # Create the appropriate generator
+        # Create the appropriate generator (API key handling is done in OpenAIAPIClient based on generator_type)
         if generator_type.lower() == "single":
             return SingleGPTGenerator(
-                api_key=api_key,
+                generator_type=generator_type,
                 model_name=model_name,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -88,7 +84,7 @@ class GPTGeneratorFactory:
                 save_intermediate = generator_cfg.get("save_intermediate", None)
 
             return BatchGPTGenerator(
-                api_key=api_key,
+                generator_type=generator_type,
                 model_name=model_name,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -97,4 +93,14 @@ class GPTGeneratorFactory:
                 save_intermediate=save_intermediate,
                 max_retries=max_retries,
                 validators=validators,
+            )
+        elif generator_type.lower() == "proassist_label":
+            # ProAssist DST Label Generator (semantic alignment-based)
+            return ProAssistDSTLabelGenerator(
+                generator_type=generator_type,
+                model_name=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                max_retries=max_retries,
+                generator_cfg=generator_cfg,
             )

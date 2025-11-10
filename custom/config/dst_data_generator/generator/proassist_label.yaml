@@ -1,0 +1,22 @@
+# ProAssist DST Label Generator settings (semantic alignment-based)
+# Merged under `generator`
+type: proassist_label
+batch_size: 500
+save_intermediate: true
+
+# Model configuration for label generator
+# (Note: The GPT model is only used if needed for debugging; main pipeline is deterministic)
+models:
+  semantic_encoder: "BAAI/bge-base-en-v1.5"  # Sentence embedding model
+  nli_model: "cross-encoder/nli-deberta-v3-base"  # NLI entailment model
+
+# Scoring parameters
+scoring:
+  alpha: 0.6  # Weight for semantic similarity vs NLI
+  positional_prior_lambda: 0.1
+  positional_prior_sigma: 0.25
+
+# Parsing parameters
+parsing:
+  gap_threshold: 2.0  # Merge blocks with micro-gaps < 2s
+  similarity_threshold: 0.6  # Jaccard similarity for merging

@@ -1,7 +1,8 @@
 name: proassist
 data_path: data/proassist/processed_data
-num_rows: 5000
-datasets: 
+num_rows: -1  # Large enough to test real batching
+suffix: "_filtered"  # Use filtered files for faster results
+datasets:
   - assembly101
   - ego4d
   - egoexolearn

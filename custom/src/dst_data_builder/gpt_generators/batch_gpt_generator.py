@@ -22,7 +22,7 @@ class BatchGPTGenerator(BaseGPTGenerator):
 
     def __init__(
         self,
-        api_key: str,
+        generator_type: str = "batch",
         model_name: str = "gpt-4o",
         temperature: float = 0.1,
         max_tokens: int = 4000,
@@ -32,12 +32,11 @@ class BatchGPTGenerator(BaseGPTGenerator):
         max_retries: int = 2,
         validators: list = None,
     ):
-        super().__init__(api_key, model_name, temperature, max_tokens, max_retries=max_retries, validators=validators)
+        super().__init__(generator_type=generator_type, model_name=model_name, temperature=temperature, max_tokens=max_tokens, max_retries=max_retries, validators=validators)
         # Configure batch options; prefer provided value, otherwise default
         self.batch_size = int(batch_size) if batch_size is not None else 100
         self.check_interval = int(check_interval) if check_interval is not None else 60
         self.save_intermediate = bool(save_intermediate)
-        
         # Batch API needs direct OpenAI client (not async, not OpenRouter)
         # This is separate from api_client which is used for async completions
         self.batch_client = self._create_batch_client()

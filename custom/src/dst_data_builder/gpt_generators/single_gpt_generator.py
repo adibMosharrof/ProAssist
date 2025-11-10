@@ -14,14 +14,14 @@ class SingleGPTGenerator(BaseGPTGenerator):
 
     def __init__(
         self,
-        api_key: str,
+        generator_type: str = "single",
         model_name: str = "gpt-4o",
         temperature: float = 0.1,
         max_tokens: int = 4000,
         validators: list = None,
         max_retries: int = 2,
     ):
-        super().__init__(api_key, model_name, temperature, max_tokens, max_retries=max_retries, validators=validators)
+        super().__init__(generator_type=generator_type, model_name=model_name, temperature=temperature, max_tokens=max_tokens, max_retries=max_retries, validators=validators)
 
     async def _execute_generation_round(self, remaining: List[Tuple[str, str, str]], attempt_idx: int, failure_reasons: Dict[str, str] = None):
         """Process all items in parallel using asyncio.gather."""

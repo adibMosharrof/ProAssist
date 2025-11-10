@@ -1,6 +1,7 @@
 """
 OpenAI API Client - Handles OpenAI API communication
 """
+import os
 import logging
 from typing import Optional, Tuple
 from openai import AsyncOpenAI
@@ -9,9 +10,18 @@ from openai import AsyncOpenAI
 class OpenAIAPIClient:
     """Handles OpenAI API communication and client management."""
 
+    # Mapping of generator types to API key environment variables
+    GENERATOR_API_KEY_MAP = {
+        "gpt": "OPENAI_API_KEY",
+        "batch": "OPENAI_API_KEY",
+        "single": "OPENAI_API_KEY",
+        "deterministic": "OPENAI_API_KEY",
+        "proassist_label": "OPENAI_API_KEY",
+    }
+
     def __init__(
         self,
-        api_key: str,
+        generator_type: str = "gpt",
         base_url: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
     ):
@@ -19,13 +29,26 @@ class OpenAIAPIClient:
         Initialize OpenAI API client.
 
         Args:
-            api_key: OpenAI API key
+            generator_type: Type of generator (e.g., "gpt", "batch", "deterministic", "proassist_label")
             base_url: Optional base URL (e.g., for OpenRouter)
             logger: Optional logger instance
         """
-        self.api_key = api_key
-        self.base_url = base_url
         self.logger = logger or logging.getLogger(__name__)
+        self.base_url = base_url
+        self.generator_type = generator_type
+        
+        # Get the API key env var for this generator type
+        api_key_env_var = self.GENERATOR_API_KEY_MAP.get(generator_type, "OPENAI_API_KEY")
+        
+        # Get API key from environment variable
+        self.api_key = os.getenv(api_key_env_var)
+        
+        if not self.api_key:
+            raise ValueError(
+                f"API key not found for generator type '{generator_type}'. "
+                f"Please set the {api_key_env_var} environment variable."
+            )
+        
         self.client = self._create_client()
 
     def _create_client(self) -> Optional[AsyncOpenAI]:

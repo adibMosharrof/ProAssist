@@ -3,18 +3,19 @@
 defaults:
   - data_source: proassist
   # - generator: batch
-  - generator: single
+  # - generator: single
+  - generator: proassist_label
   - model: gpt4o
   # - model: claude4_5
 
-max_retries: 2
+max_retries: 1
 # Logging
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-exp_name: 5000rows
+exp_name: 50rows
 # Hydra configuration
 hydra:
   run:
-    dir: custom/outputs/dst_generated/${now:%Y-%m-%d}/${now:%H-%M-%S}_${model.log_name}_${data_source.name}_${exp_name}
+    dir: custom/outputs/dst_generated/${generator.type}/${now:%Y-%m-%d}/${now:%H-%M-%S}_${model.log_name}_${data_source.name}_${exp_name}

@@ -39,11 +39,12 @@ class DataSourceFactory:
             return ManualDSTDataset(data_path=data_path, num_rows=num_rows)
 
         if name in ("proassist", "proassist_raw"):
-            data_path = cfg.get("data_path") 
+            data_path = cfg.get("data_path")
             num_rows = cfg.get("num_rows", None)
             datasets = cfg.get("datasets", [])
+            suffix = cfg.get("suffix", "")
             return ProAssistDSTDataset(
-                data_path=data_path, num_rows=num_rows, datasets=datasets
+                data_path=data_path, num_rows=num_rows, datasets=datasets, suffix=suffix
             )
 
         raise ValueError(f"Unknown data source/dataset name: {name}")

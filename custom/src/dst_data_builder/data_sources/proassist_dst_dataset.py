@@ -1,53 +1,48 @@
+"""ProAssist DST Dataset - Lean dataset class that receives data in __init__"""
+
+import json
+import logging
 from pathlib import Path
-from typing import Optional, Union, List
+from typing import List, Dict, Any, Union, Optional
 
 from dst_data_builder.data_sources.base_dst_dataset import BaseDSTDataset
 
 
 class ProAssistDSTDataset(BaseDSTDataset):
-    """Dataset for ProAssist data with nested JSON files.
-
-    - If a `datasets` list is provided, it looks under
-      `base_dir/processed_data/<dataset>/generated_dialogs/<split>` for JSON files
-      where `<split>` is one of `train`, `val`, `test`.
-    - Otherwise it falls back to a recursive search of all JSON files under
-      `base_dir`.
-
-    The `num_rows` argument truncates the results (None or -1 => no truncation).
+    """Simple, lean dataset for ProAssist data.
+    
+    This dataset receives data as a list in __init__ and provides basic data access.
+    All data loading and processing is handled by DSTDataModule.
     """
-
-    def __init__(
-        self,
-        data_path: Union[str, Path],
-        num_rows: Optional[int] = None,
-        datasets: Optional[List[str]] = None,
-    ):
+    
+    def __init__(self, data: List[Dict[str, Any]], num_rows: Optional[int] = None):
+        """Initialize dataset with pre-loaded data.
+        
+        Args:
+            data: List of video objects (already loaded from JSON)
+            num_rows: Optional truncation of dataset size
+        """
         super().__init__()
-        self.base_dir = Path(data_path)
-        self.datasets = datasets or []
-
-        items: List[Path] = []
-
-        if not self.base_dir.exists():
-            items = []
-        else:
-            if self.datasets:
-                # Look into <dataset>/generated_dialogs/<split>
-                # (assumes base_dir already points to processed_data)
-                for dataset_name in self.datasets:
-                    dataset_path = self.base_dir / dataset_name / "generated_dialogs"
-                    if dataset_path.exists():
-                        for split in ["train", "val", "test"]:
-                            split_path = dataset_path / split
-                            if split_path.exists():
-                                items.extend(sorted(split_path.rglob("*.json")))
-            else:
-                # Fallback: include all JSON files
-                items = list(self.base_dir.rglob("*.json"))
-
-        # Apply truncation if requested
-        if num_rows is not None and num_rows != -1:
-            items = items[: int(num_rows)]
-
-        self._items = sorted(items)
+        self._data = data
         self._num_rows = None if (num_rows is None or num_rows == -1) else int(num_rows)
+        self.logger = logging.getLogger(self.__class__.__name__)
+
+    def __len__(self) -> int:
+        """Return dataset size"""
+        data = self._data if self._num_rows is None else self._data[:self._num_rows]
+        return len(data)
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        """Get item by index"""
+        data = self._data if self._num_rows is None else self._data[:self._num_rows]
+        if idx >= len(data):
+            raise IndexError("Index out of range")
+        return data[idx]
+
+    def get_dataset_size(self) -> int:
+        """Get dataset size (compatibility method)"""
+        return len(self)
+
+    def get_data(self) -> List[Dict[str, Any]]:
+        """Get the underlying data list"""
+        return self._data if self._num_rows is None else self._data[:self._num_rows]

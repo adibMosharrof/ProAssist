@@ -20,7 +20,7 @@ class BaseGPTGenerator(ABC):
 
     def __init__(
         self,
-        api_key: str,
+        generator_type: str = "gpt",
         model_name: str = "gpt-4o",
         temperature: float = 0.1,
         max_tokens: int = 4000,
@@ -30,7 +30,6 @@ class BaseGPTGenerator(ABC):
         # Instance-level logger for this generator and subclasses
         self.logger = logging.getLogger(__name__)
 
-        self.api_key = api_key
         self.model_name = model_name
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -44,18 +43,9 @@ class BaseGPTGenerator(ABC):
         # These validators run AFTER JSON parsing succeeds
         self.validators = validators or []
 
-        # Create the OpenAI API client (default uses OpenRouter)
-        self.api_client = self._create_api_client()
-
-    def _create_api_client(self) -> OpenAIAPIClient:
-        """
-        Create and return an OpenAI API client. Can be overridden by subclasses.
-        
-        Default implementation uses OpenRouter base URL.
-        """
-        return OpenAIAPIClient(
-            api_key=self.api_key,
-            base_url="https://openrouter.ai/api/v1",
+        # Create the OpenAI API client (handles API key from environment)
+        self.api_client = OpenAIAPIClient(
+            generator_type=generator_type,
             logger=self.logger
         )
 
@@ -158,24 +148,62 @@ class BaseGPTGenerator(ABC):
                 raw_map[input_path] = None
                 continue
 
-            inferred_knowledge = data.get("inferred_knowledge", "")
-            parsed_anns = data.get("parsed_video_anns", {})
-            all_step_descriptions = parsed_anns.get("all_step_descriptions", "")
-
-            if not inferred_knowledge or not all_step_descriptions:
-                self.logger.warning(f"Missing required fields in {input_path}")
+            # Handle both single video objects and lists of videos
+            video_objects = []
+            if isinstance(data, list):
+                # Filtered format: list of video objects
+                video_objects = data
+            elif isinstance(data, dict):
+                # Original format: single video object
+                video_objects = [data]
+            else:
+                self.logger.warning(f"Unexpected data format in {input_path}: {type(data)}")
                 raw_map[input_path] = None
                 continue
 
-            items.append((input_path, inferred_knowledge, all_step_descriptions))
-            raw_map[input_path] = data
+            # Process each video object
+            for i, video_obj in enumerate(video_objects):
+                # Handle different data structures
+                inferred_knowledge = video_obj.get("inferred_knowledge", "")
+                
+                # Try different locations for all_step_descriptions
+                all_step_descriptions = ""
+                if "parsed_video_anns" in video_obj and isinstance(video_obj["parsed_video_anns"], dict):
+                    all_step_descriptions = video_obj["parsed_video_anns"].get("all_step_descriptions", "")
+                elif "conversations" in video_obj:
+                    # Extract step descriptions from conversations
+                    conversations = video_obj.get("conversations", [])
+                    step_descriptions = []
+                    for conv in conversations:
+                        if isinstance(conv, dict) and "conversation" in conv:
+                            for turn in conv["conversation"]:
+                                if turn.get("role") == "user" and turn.get("content"):
+                                    step_descriptions.append(f"[{turn.get('time', 0)}] {turn.get('content', '')}")
+                    all_step_descriptions = "\n".join(step_descriptions)
+
+                if not inferred_knowledge or not all_step_descriptions:
+                    self.logger.warning(f"Missing required fields in {input_path} video {i}")
+                    continue
+
+                # Create unique identifier for this video
+                video_id = f"{input_path}#video_{i}"
+                items.append((video_id, inferred_knowledge, all_step_descriptions))
+                raw_map[video_id] = video_obj
 
         return items, raw_map
 
     def _save_dst_output(self, result: Optional[DSTOutput], input_path: str, dst_output_dir: Path) -> bool:
         """Save a single DST output to file. Returns True if successful."""
         try:
-            out_name = f"dst_{Path(input_path).name}"
+            if "#video_" in input_path:
+                # Handle individual videos from filtered files
+                file_path, video_id = input_path.split("#video_")
+                video_idx = int(video_id)
+                out_name = f"dst_{Path(file_path).stem}_video_{video_idx}.json"
+            else:
+                # Handle original single video files
+                out_name = f"dst_{Path(input_path).name}"
+            
             out_file = dst_output_dir / out_name
 
             if result is None:
