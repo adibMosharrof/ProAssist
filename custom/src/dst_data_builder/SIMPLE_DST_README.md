@@ -35,13 +35,29 @@ pip install -r custom/src/dst_data_builder/simple_requirements.txt
 ```
 
 ### 2. Configure Generator Type
-Edit `custom/config/simple_dst_generator.yaml` (the generator is fully Hydra-driven):
+Edit `custom/config/dst_data_generator/simple_dst_generator.yaml` (the generator is fully Hydra-driven):
 ```yaml
 generator:
   type: "batch"  # Options: "single" or "batch". Batch is recommended for production.
 ```
 
-### 3. Run the Generator (recommended)
+### 3. Configure Data Source
+Edit `custom/config/dst_data_generator/data_source/proassist.yaml`:
+```yaml
+name: proassist
+data_path: data/proassist/processed_data
+num_rows: -1  # Use -1 to process ALL videos, or specify a number like 100 for testing
+suffix: "_filtered"  # Use filtered files for faster results
+datasets:
+  - assembly101
+  - ego4d
+  - egoexolearn
+  - epickitchens
+  - holoassist
+  - wtag
+```
+
+### 4. Run the Generator (recommended)
 Use the bundled runner script which activates the project's virtualenv and runs the Hydra entrypoint with the correct PYTHONPATH and environment handling:
 
 ```bash
@@ -117,6 +133,30 @@ custom/outputs/dst_generated/
 - **Automatic Retries**: Up to 3 attempts for malformed JSON responses
 - **Smart Recovery**: Brief pauses between retry attempts
 - **Error Tracking**: Clear logging of retry attempts and failures
+
+### **📊 Full Dataset Processing:**
+- **Complete Data Processing**: Set `num_rows: -1` to process all videos in JSON files
+- **Batch Optimization**: Massive batch size scaling (500-1000 videos per batch)
+- **Memory Management**: GPU memory optimization for 90% utilization target
+- **Dynamic Batching**: Memory-aware processing with real-time monitoring
+
+**Configuration Example for Full Processing:**
+```yaml
+# custom/config/dst_data_generator/data_source/proassist.yaml
+data_source:
+  name: "proassist"
+  data_path: "data/proassist/processed_data"
+  num_rows: -1  # Process ALL videos - new feature!
+  suffix: "_filtered"
+  datasets:
+    - assembly101    # 756 videos
+    - ego4d          # 382 videos
+    - egoexolearn    # 321 videos
+    - epickitchens   # ~400 videos
+    - holoassist     # ~300 videos
+    - wtag           # ~200 videos
+    # Total: ~2,359+ videos will be processed when num_rows=-1
+```
 
 ### **🏭 Factory Pattern:**
 - **Generator Selection**: Choose between single/batch processing via config
