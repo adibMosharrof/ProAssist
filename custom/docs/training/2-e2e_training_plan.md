@@ -14,20 +14,19 @@ The training will involve multi-task learning with both dialogue generation and 
 
 The DST will replace the summarization task that proassist would do.
 
-So with my approach, the model has to output the DST, speaking decision, and dialog response if the model decides to speak.
+My model will have to output two categories: DST and the assistant response.
+
+However, not all frames will require updates, so for each category will have a decision component.
+
+So overall, the model has to output DST update decision, updated DST if the decision was true, speaking decision, and dialog response if the model decides to speak.
 
 The metrics to be tracked will be the F1 score of the speaking decision, accuracy of DST and reponse quality.
 
-During training, the loss has to incorporate the speaking decision loss, DST accuracy loss, and response generation loss. 
+During training, the loss has to incorporate the DST update decision loss, DST accuracy loss, speaking decision loss, and response generation loss. 
 
-Initially lets not add any weights to the different losses.
-
-
-The speaking decision has a high class imbalance, so appropriate weighting or sampling techniques will be necessary to ensure effective learning.
+The speaking and DST update decisions have a high class imbalance, so appropriate weighting or sampling techniques will be necessary to ensure effective learning.
 
 We can start with focal loss, then explore other options.
-
-The DST will stay the same most of the time, it will mainly update during transitions, so the model should be designed to handle sparse updates efficiently.
 
 The response has to be related to the task and context, ensuring relevance and coherence.
 
@@ -39,28 +38,31 @@ The video frames and previous dialog history will be embedded in the KV cache.
 The DST and instructions will be added as text prompts.
 
 
-### Outputs
+### Input and Outputs
 
 #### DST
 
 
-The tsv file contains the DST with the timestamps. 
-
-Each line in the  tsv file represents a node.
+The json file contains the DST with the timestamps. 
 
 We can derive the ground truth state using the timestamps present.
 
-Each item in the DST will be a node. The DST is a 3-level tree, it will have steps, substeps and actions.
-
-The states will be: In Progress, Completed, Not Started
-
-The model has to label the state of each node.
+Each item in the DST will be a node and will have a state which will be one of In Progress, Completed, Not Started.
 
 The initial state of all nodes will be not started.
 
-Instead of updating at each time step, the model should make a decision at every time step whether it should update DST or not. Once it decides to update, it should output the new state. The design is similar to the when to speak and response generation style updates.
+The model has to update the state of certain nodes when it decides to.
 
-Should update DST should be a binary decision.
+The design is similar to the when to speak and response generation style updates.
+
+#### DST Update Decision
+
+It is a binary decision.
+
+#### DST Update
+
+The model outputs the updated states for the nodes it decides to update.
+The output of this step should be a valid DST.
 
 #### Speaking Decision
 
@@ -71,24 +73,20 @@ It is a binary decision.
 The response should be grounded on the video frames, conversation history, dialog state.
 It will be free-form text.
 
-It will be evaluated with metrics like BLEU, METEOR, semantic similarity. See the metrics in proassist, we already have implemented them.
-
-#### Validations
-
-We have to have a mechanism to handle the hierarchical nature of the DST, ensuring consistency between parent and child nodes.
-
-We also have to make sure we have a valid DST after each update.
-
+It will be evaluated with metrics like BLEU, METEOR, semantic similarity. 
+See the metrics in proassist, we already have implemented them.
 
 ## Data
 
-DST data: data/proassist_dst_manual_data/assembly101/assembly_nusar-2021_action_both_9011-c03f_9011_user_id_2021-02-01_160239__HMC_84355350_mono10bit.tsv
+DST data: custom/outputs/dst_generated/proassist_label/2025-11-06/17-02-11_gpt-4o_proassist_50rows/assembly101/val.json
 
-proassist data: data/proassist/processed_data/assembly101
+The above json contains the full data. The dst data is inside a "dst" key.
 
 We will have separate datasets for training, validation, and testing to ensure robust evaluation.
 
-There are no missing data. The DST annotations was generated with LLMs, so there could be some errors in it, but we should not worry about it initially.
+There are no missing data. The DST annotations were deterministically calculated using the video timestamps.
+
+Read custom/docs/dst_data/proassist_dst_label_plan.md for details on how labels were generated.
 
 
 ## Learning

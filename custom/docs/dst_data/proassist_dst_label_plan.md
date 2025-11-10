@@ -260,6 +260,52 @@ Low-confidence steps can be dropped or down-weighted during training.
 
 ---
 
+## 13. Implementation Plan
+
+### Overview
+A modular, reproducible generator will be added to the ProAssist DST pipeline, following the above plan. This generator will:
+- Take `inferred_knowledge` and `all_step_descriptions` as input.
+- Parse, align, and merge blocks using semantic similarity, NLI, and monotonic DP.
+- Output YAML files with step spans and a detailed audit log (including all intermediate matrices).
+- Optionally export per-frame CSVs for segmentation models.
+
+### Steps
+1. **New Generator Class**
+   - Implement as `ProAssistDSTLabelGenerator` in the codebase.
+   - Register in the generator factory/config for easy selection.
+
+2. **Dependencies**
+   - Add `sentence-transformers`, `cross-encoder`, `pyyaml`, `numpy`, and `pandas` to requirements.
+
+3. **Parsing**
+   - Parse annotation lines into normalized blocks with timestamps, handling hierarchy and duration inference as described.
+
+4. **Embedding & Similarity**
+   - Use `BAAI/bge-base-en-v1.5` for block/step embeddings and cosine similarity.
+   - Optionally add positional prior.
+
+5. **NLI Scoring**
+   - Use `cross-encoder/nli-deberta-v3-base` for entailment scoring between blocks and steps.
+
+6. **Joint Scoring & Assignment**
+   - Normalize and combine scores, then run monotonic DP for block-to-step assignment.
+
+7. **Merging & Output**
+   - Merge assignments into step spans, compute confidence metrics, and auto-fix overlaps/gaps.
+   - Output YAML with step spans and audit log (matrices, flags, confidence, coverage, etc.).
+   - Optionally output per-frame CSV.
+
+8. **Integration & Testing**
+   - Integrate with Hydra config and CLI runner.
+   - Test on provided data and validate outputs.
+
+### Notes
+- No hand-crafted lexicons or LLM timestamp hallucination.
+- All thresholds and model choices are configurable for future tuning.
+- Audit log ensures transparency and reproducibility.
+
+---
+
 **Author:** Adib Mosharrof  
 **Project:** ProAssist DST Label Generation  
 **Version:** v1.0  (Updated Nov 2025)
