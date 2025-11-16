@@ -3,6 +3,7 @@ data_path: data/proassist/processed_data
 # num_rows: -1  # Large enough to test real batching
 num_rows: 50  # Large enough to test real batching
 suffix: "_filtered"  # Use filtered files for faster results
+frames_subdir: "frames"
 datasets:
   - assembly101
   # - ego4d

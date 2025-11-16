@@ -4,7 +4,7 @@
 
 ## Overview
 
-This document outlines the detailed implementation plan for extending the existing SimpleDSTGenerator to create training-ready Dialog State Tracking (DST) data directly. While inspired by ProAssist's approach, this implementation builds upon the current enhanced DST + SPEAK data format to generate training data with key differences:
+This document outlines the detailed implementation plan for adding training data creation capabilities to the existing SimpleDSTGenerator by creating new modules. While inspired by ProAssist's approach, this implementation builds upon the current enhanced DST + SPEAK data format to generate training data with key differences:
 
 **Key Differences from ProAssist**:
 - **Frame Information**: Embedded directly in conversation events (not separate "frames" turns)
@@ -26,9 +26,9 @@ Raw ProAssist Data → DST Generation → Enhanced SPEAK/DST Format
 ## Target Pipeline Architecture
 
 ```
-Raw ProAssist Data → DST Generation → Enhanced SPEAK/DST Format → Training Data Transformation → ProAssist Training Format
-                                                                ↓
-                                                         [Training-Ready Data]
+Raw ProAssist Data → DST Generation → Enhanced SPEAK/DST Format → Training Data Creation → ProAssist Training Format
+                                                                  ↓
+                                                           [Training-Ready Data]
 ```
 
 ## Implementation Components
@@ -37,7 +37,7 @@ Raw ProAssist Data → DST Generation → Enhanced SPEAK/DST Format → Training
 
 **Purpose**: Embed frame information directly into conversation events rather than using separate frame turns
 
-**Location**: Extend `SpeakDSTGenerator` with frame embedding methods
+**Location**: New `FrameIntegrationModule` class to integrate with `SimpleDSTGenerator`
 
 **Key Functions**:
 - `embed_frames_in_conversation()`: Add `start_frame` and `end_frame` keys to SPEAK and DST_UPDATE events
@@ -46,16 +46,15 @@ Raw ProAssist Data → DST Generation → Enhanced SPEAK/DST Format → Training
 
 **Configuration Parameters** (add to `simple_dst_generator.yaml`):
 ```yaml
-training_transformation:
+training_creation:
   fps: 2  # Frames per second for frame index calculation
-  frames_subdir: "frames"  # Subdirectory containing frame files
 ```
 
-### 2. Sequence Length Calculator
+### 2. Sequence Length Calculator Module
 
 **Purpose**: Pre-compute token counts for efficient batching and memory management
 
-**Location**: New `SequenceCalculator` class or extend `DSTDataProcessor`
+**Location**: New `SequenceLengthCalculatorModule` class to integrate with `SimpleDSTGenerator`
 
 **Key Functions**:
 - `calculate_text_tokens()`: Tokenize conversation text using target model's tokenizer
@@ -65,17 +64,17 @@ training_transformation:
 
 **Configuration Parameters**:
 ```yaml
-training_transformation:
+training_creation:
   max_seq_len: 4096  # SmolVLM sequence limit
   num_tokens_per_img: 1  # Tokens per frame
   tokenizer_name: "HuggingFaceTB/SmolVLM2-2.2B-Instruct"  # For token counting
 ```
 
-### 3. Conversation Splitter
+### 3. Conversation Splitter Module
 
 **Purpose**: Split long conversations into multiple training samples when they exceed sequence length limits
 
-**Location**: New `ConversationSplitter` class (based on ProAssist's `split_conversation`)
+**Location**: New `ConversationSplitterModule` class (based on ProAssist's `split_conversation`)
 
 **Key Functions**:
 - `split_long_conversations()`: Split conversations at assistant turns when approaching `max_seq_len`
@@ -87,7 +86,7 @@ training_transformation:
 
 **Configuration Parameters**:
 ```yaml
-training_transformation:
+training_creation:
   enable_conversation_splitting: true
   keep_context_length: [5, 20]  # Min/max seconds of video context overlap when splitting
 ```
@@ -106,11 +105,11 @@ training_transformation:
 - **Implementation**: `compute_dst_state_at_split()` calculates state at each split point
 - **Injection**: Add initial DST state to system prompt or metadata for each clip
 
-### 3.5 DST State Tracker
+### 3.5 DST State Tracker Module
 
 **Purpose**: Maintain accurate DST state across conversation splits for training data integrity
 
-**Location**: New `DSTStateTracker` class integrated into conversation splitting
+**Location**: New `DSTStateTrackerModule` class integrated with conversation splitting
 
 **Key Functions**:
 - `track_dst_transitions()`: Monitor all DST_UPDATE events in chronological order
@@ -167,35 +166,41 @@ Current DST state: Step S1 is completed, Step S2 is not_started.
 {progress_context}"""
 ```
 
-### 4. Extended SpeakDSTGenerator
+### 4. Enhanced SpeakDST Generator Module
 
-**Purpose**: Transform SPEAK/DST events into self-contained conversation items with frame information
+**Purpose**: Create SPEAK/DST events into self-contained conversation items with frame information
 
-**Location**: Extend existing `SpeakDSTGenerator` class with new methods
+**Location**: New `EnhancedSpeakDSTGeneratorModule` class to extend SpeakDSTGenerator capabilities
 
 **Key Functions**:
 - `add_frames_to_conversation()`: Add frame ranges to each conversation item
-- `transform_dst_events()`: Convert DST_UPDATE events to include frame context
+- `create_dst_events_with_frames()`: Convert DST_UPDATE events to include frame context
 - `create_system_message()`: Add ProAssist system prompt
 - `add_training_metadata()`: Include `dataset`, `clip_idx`, training-relevant fields
 
 **Configuration Parameters**:
 ```yaml
-training_transformation:
+training_creation:
   conversation_format: "proassist_training"  # vs "enhanced_dst"
   include_system_prompt: true
-  system_prompt_variations:  # Multiple prompt variations for diversity (following ProAssist)
-    - "You are a helpful assistant."
-    - "You are a proactive assistant. Pay close attention to the user's actions and provide relevant information proactively."
-    - "You are a helpful and proactive assistant. Always be ready to assist and provide useful information ahead of time."
-    - "You are an assistant that anticipates user needs. Provide assistance before being asked when appropriate."
+
 ```
 
-### 5. DST Event Grounding & Labeling
+The system prompts variations are extracted into a separate python file and will be used during prompt generation.
+```yaml
+system_prompt_variations:  # Multiple prompt variations for diversity (following ProAssist)
+- "You are a helpful assistant."
+- "You are a proactive assistant. Pay close attention to the user's actions and provide relevant information proactively."
+- "You are a helpful and proactive assistant. Always be ready to assist and provide useful information ahead of time."
+- "You are an assistant that anticipates user needs. Provide assistance before being asked when appropriate."
+```
+
+
+### 5. DST Event Grounding & Labeling Module
 
 **Purpose**: Embed frame information and generate initiative/intent labels for DST_UPDATE and SPEAK events
 
-**Location**: Integrate into Extended SpeakDSTGenerator
+**Location**: New `DSTEventGroundingModule` class to integrate with conversation creation
 
 **Key Functions**:
 - `add_frames_to_conversation_events()`: Add `start_frame` and `end_frame` keys to DST_UPDATE and SPEAK events
@@ -226,7 +231,7 @@ training_transformation:
 - **Prediction Expectation**: Model should update all relevant step states based on conversation context
 - **Training Labels**: Each transition maintains its own DST_UPDATE event with embedded frame information
 
-**Example Transformation** (Frame Info Embedded in Conversation Events)**:
+**Example Creation** (Frame Info Embedded in Conversation Events)**:
 ```python
 # Input: Enhanced DST + SPEAK events with timestamps
 [
@@ -289,15 +294,15 @@ training_transformation:
 
 **Configuration Parameters**:
 ```yaml
-training_transformation:
+training_creation:
   dst_frame_duration: 1  # Frames to show for each DST event (seconds)
 ```
 
-### 6. Dataset Metadata Generator
+### 6. Dataset Metadata Generator Module
 
 **Purpose**: Add ProAssist training dataset metadata
 
-**Location**: New `MetadataGenerator` class
+**Location**: New `DatasetMetadataGeneratorModule` class to integrate with SimpleDSTGenerator
 
 **Key Functions**:
 - `generate_dataset_metadata()`: Add `dataset`, `clip_idx`, `user_type`, training flags
@@ -327,7 +332,7 @@ training_transformation:
 
 **Configuration Parameters**:
 ```yaml
-training_transformation:
+training_creation:
   include_quality_metrics: true
 ```
 
@@ -339,14 +344,14 @@ training_transformation:
 def run(self, cfg: DictConfig) -> None:
     # ... existing code ...
 
-    # NEW: Initialize transformation components (always enabled)
-    self.frame_integrator = FrameIntegrator(cfg.training_transformation)
-    self.sequence_calculator = SequenceCalculator(cfg.training_transformation)
-    self.conversation_splitter = ConversationSplitter(cfg.training_transformation)
-    self.conversation_transformer = ConversationTransformer(cfg.training_transformation)
-    self.dst_grounding = DSTGrounding(cfg.training_transformation)
-    self.dst_state_tracker = DSTStateTracker(cfg.training_transformation)
-    self.metadata_generator = MetadataGenerator(cfg.training_transformation)
+    # NEW: Initialize training data creation modules
+    self.frame_integration = FrameIntegrationModule(cfg.training_creation)
+    self.sequence_calculator = SequenceLengthCalculatorModule(cfg.training_creation)
+    self.conversation_splitter = ConversationSplitterModule(cfg.training_creation)
+    self.dst_state_tracker = DSTStateTrackerModule(cfg.training_creation)
+    self.enhanced_speak_dst = EnhancedSpeakDSTGeneratorModule(cfg.training_creation)
+    self.dst_grounding = DSTEventGroundingModule(cfg.training_creation)
+    self.metadata_generator = DatasetMetadataGeneratorModule(cfg.training_creation)
 
     # ... existing dataset processing loop ...
 
@@ -354,41 +359,41 @@ def run(self, cfg: DictConfig) -> None:
         for split in splits:
             # ... existing DST processing ...
 
-            # NEW: Transform to training format (always enabled)
-            training_data = self.transform_to_training_format(
+            # NEW: Create training format directly (always enabled)
+            training_data = self.create_training_format(
                 enhanced_data, dataset_name, split
             )
             # Save training format instead of enhanced format
 ```
 
-### New `transform_to_training_format()` Method
+### New `create_training_format()` Method
 
 ```python
-def transform_to_training_format(self, enhanced_data, dataset_name, split):
-    """Transform enhanced DST data to ProAssist training format"""
+def create_training_format(self, enhanced_data, dataset_name, split):
+    """Create training data directly from enhanced DST data"""
 
     training_samples = []
 
     for video_data in enhanced_data:
-        # 1. Add frame integration
-        video_data = self.frame_integrator.add_frame_metadata(video_data, dataset_name)
+        # 1. Add frame information
+        video_data = self.frame_integration.add_frame_metadata(video_data, dataset_name)
 
-        # 2. Transform conversation structure
-        video_data = self.conversation_transformer.transform_conversation(video_data)
+        # 2. Create training conversation structure
+        video_data = self.enhanced_speak_dst.create_training_conversation(video_data)
 
-        # 3. Add frame information to DST events
-        video_data = self.dst_grounding.add_frames_to_dst_events(video_data)
-
-        # 4. Track DST state throughout conversation for accurate splitting
+        # 3. Track DST state throughout conversation for accurate splitting
         self.dst_state_tracker.track_dst_transitions(video_data)
 
-        # 5. Split long conversations into multiple training samples
+        # 4. Split long conversations into multiple training samples
         conversation_segments = self.conversation_splitter.split_conversations(video_data)
 
-        # 6. Process each conversation segment
+        # 5. Process each conversation segment
         for segment_idx, segment_data in enumerate(conversation_segments):
             # Inject correct initial DST state for this segment
             segment_data = self.dst_state_tracker.inject_initial_dst_state(segment_data, segment_idx)
+
+            # Add frame grounding and labels
+            segment_data = self.dst_grounding.add_frames_and_labels(segment_data)
 
             # Calculate sequence lengths for this specific segment
             # seq_len, start_frame_idx, end_frame_idx are relative to this clip
@@ -411,11 +416,10 @@ def transform_to_training_format(self, enhanced_data, dataset_name, split):
 ```yaml
 # ... existing config ...
 
-# NEW: Training data transformation
-training_transformation:
+# NEW: Training data creation
+training_creation:
   # Frame integration
   fps: 2
-  frames_subdir: "frames"
 
   # Sequence calculation
   max_seq_len: 4096
@@ -426,15 +430,15 @@ training_transformation:
   enable_conversation_splitting: true
   keep_context_length: [5, 20]
 
-  # Conversation transformation
- conversation_format: "proassist_training"
- include_system_prompt: true
+  # Conversation creation
+  conversation_format: "proassist_training"
+  include_system_prompt: true
 
- # DST grounding
- dst_frame_duration: 1
+  # DST grounding
+  dst_frame_duration: 1
 
- # Dataset metadata
- include_quality_metrics: true
+  # Dataset metadata
+  include_quality_metrics: true
 
 # Output format control
 output:
@@ -444,18 +448,18 @@ output:
 
 ## File Structure Changes
 
-### New Files to Create
-- `custom/src/dst_data_builder/training_data_transformer.py` - Main transformation orchestrator
-- `custom/src/dst_data_builder/frame_integrator.py` - Frame metadata handling
-- `custom/src/dst_data_builder/sequence_calculator.py` - Token counting and validation
-- `custom/src/dst_data_builder/conversation_splitter.py` - Conversation splitting logic
-- `custom/src/dst_data_builder/dst_grounding.py` - DST event frame integration
-- `custom/src/dst_data_builder/dst_state_tracker.py` - DST state tracking across conversation splits
+### New Module Files to Create
+- `custom/src/dst_data_builder/training_modules/frame_integration_module.py` - Frame metadata handling
+- `custom/src/dst_data_builder/training_modules/sequence_length_calculator_module.py` - Token counting and validation
+- `custom/src/dst_data_builder/training_modules/conversation_splitter_module.py` - Conversation splitting logic
+- `custom/src/dst_data_builder/training_modules/dst_state_tracker_module.py` - DST state tracking across conversation splits
+- `custom/src/dst_data_builder/training_modules/enhanced_speak_dst_generator_module.py` - Enhanced SPEAK/DST generation for training
+- `custom/src/dst_data_builder/training_modules/dst_event_grounding_module.py` - DST event frame integration
+- `custom/src/dst_data_builder/training_modules/dataset_metadata_generator_module.py` - Dataset metadata generation
 
 ### Modified Files
-- `custom/src/dst_data_builder/simple_dst_generator.py` - Add transformation pipeline
-- `custom/src/dst_data_builder/speak_dst_generator.py` - Extend with frame information methods
-- `custom/config/dst_data_generator/simple_dst_generator.yaml` - Add transformation config
+- `custom/src/dst_data_builder/simple_dst_generator.py` - Add training creation pipeline integration
+- `custom/config/dst_data_generator/simple_dst_generator.yaml` - Add training creation config
 
 ## Data Validation
 
@@ -475,7 +479,7 @@ output:
 ### Unit Tests
 - Frame index calculation accuracy
 - Token counting precision
-- Conversation transformation correctness
+- Conversation creation correctness
 - Metadata generation completeness
 
 ### Integration Tests
@@ -497,13 +501,13 @@ output:
 
 ## Migration Path
 
-### Phase 1: Core Transformation
-- Implement frame integration and sequence calculation
-- Basic conversation transformation
+### Phase 1: Core Modules
+- Implement frame integration and sequence calculation modules
+- Basic conversation creation
 - Generate initial training data samples
 
 ### Phase 2: Enhancement
-- Add DST event grounding
+- Add DST event grounding and state tracking modules
 - Implement comprehensive validation
 - Optimize performance
 
@@ -518,7 +522,7 @@ output:
 - ✅ **Sequence Management**: All sequences within model limits
 - ✅ **Frame Integration**: Video frames load correctly during training
 - ✅ **DST Preservation**: Enhanced DST information maintained in training format
-- ✅ **Performance**: Transformation adds minimal overhead to generation pipeline
+- ✅ **Performance**: Creation adds minimal overhead to generation pipeline
 
 ## ProAssist Code References
 
@@ -588,7 +592,7 @@ def split_conversation(conversation, max_length, keep_context=True):
 
     # Add final segment
     if current_segment:
-        segments.append(current_segment)
+        segments.append(segment)
 
     return segments
 ```
@@ -783,4 +787,4 @@ def calculate_image_tokens(conversation, args):
 
 ---
 
-**Next Steps**: Implement Phase 1 components and test with sample data before full pipeline integration.
+**Next Steps**: Implement Phase 1 modules and test with sample data before full pipeline integration.
