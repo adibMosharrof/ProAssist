@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Shell script to run the Simple DST Generator
-# Usage: ./run_dst_generator.sh [--gpu GPU_ID]
+# Shell script to run DST Training
+# Usage: ./run_dst_training.sh
 # Configuration and overrides should be provided via Hydra configs only
 
 set -e  # Exit on error
@@ -13,34 +13,12 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Parse command line arguments
-GPU_ID=""
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --gpu)
-            GPU_ID="$2"
-            shift 2
-            ;;
-        --help|-h)
-            echo "Usage: $0 [--gpu GPU_ID]"
-            echo "  --gpu GPU_ID    Specify GPU ID to use (e.g., 0, 1)"
-            echo "  --help, -h      Show this help message"
-            exit 0
-            ;;
-        *)
-            echo -e "${RED}Unknown option: $1${NC}"
-            echo "Usage: $0 [--gpu GPU_ID]"
-            exit 1
-            ;;
-    esac
-done
-
 echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║   Simple DST Generator Runner         ║${NC}"
-echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
+echo -e "${BLUE}║   PROSPECT DST Training Runner        ║${NC}"
+echo -e "${BLUE}╔════════════════════════════════════════╝${NC}"
 echo ""
 
-# Try to load common user shell profile files so environment variables (like OPENROUTER_API_KEY) are available
+# Try to load common user shell profile files so environment variables are available
 # Source multiple possible files (.bash_profile, .bashrc, .profile, .bash_login)
 profile_files=("$HOME/.bash_profile" "$HOME/.bashrc" "$HOME/.profile" "$HOME/.bash_login")
 for pf in "${profile_files[@]}"; do
@@ -65,23 +43,6 @@ if [ "$HOME" != "$LOGNAME" ] || true; then
             echo "Sourced (after HOME change): $pf2"
         fi
     fi
-fi
-
-# Show a masked presence check for OPENROUTER_API_KEY to help debug missing key issues
-if [ -n "$OPENROUTER_API_KEY" ]; then
-    # Mask the key (first 6 and last 4 chars)
-    key_masked="${OPENROUTER_API_KEY:0:6}...${OPENROUTER_API_KEY: -4}"
-    echo -e "${GREEN}🔑 OPENROUTER_API_KEY found: ${key_masked}${NC}"
-else
-    echo -e "${YELLOW}⚠️ OPENROUTER_API_KEY not found in environment after sourcing common profile files.${NC}"
-    echo -e "${YELLOW}Check where you export the key (e.g. ~/.bashrc, ~/.bash_profile) and ensure it's exported with 'export OPENROUTER_API_KEY=...'.${NC}"
-fi
-
-# Check if OPENROUTER_API_KEY is set
-if [ -z "$OPENROUTER_API_KEY" ]; then
-    echo -e "${RED}❌ Error: OPENROUTER_API_KEY environment variable is not set${NC}"
-    echo -e "${YELLOW}Please set it using: export OPENROUTER_API_KEY='your-api-key' or add it to ~/.bash_profile${NC}"
-    exit 1
 fi
 
 # Get the directory where the script is located
@@ -121,32 +82,24 @@ else
 fi
 
 # Add custom/src to PYTHONPATH for module imports
-export PYTHONPATH="$PROJECT_ROOT/custom/src:$PYTHONPATH"
+export PYTHONPATH="$PROJECT_ROOT/custom/src:$PROJECT_ROOT:$PYTHONPATH"
 echo -e "${GREEN}📦 PYTHONPATH: ${PYTHONPATH}${NC}"
 
-# Set GPU if specified
-if [ -n "$GPU_ID" ]; then
-    export CUDA_VISIBLE_DEVICES="$GPU_ID"
-    echo -e "${GREEN}🎮 GPU selected: ${GPU_ID}${NC}"
-else
-    echo -e "${YELLOW}🎮 GPU: Using default (all available)${NC}"
-fi
-
 # Build the Python command - run as module
-PYTHON_CMD_ARGS="-m dst_data_builder.simple_dst_generator"
+PYTHON_CMD_ARGS="-m prospect.train.dst_training_prospect"
 
 # Helper to run python either via activated conda or conda run -p or direct venv python
 run_python() {
     if [ "${ACTIVATED_VIA_ACTIVATE:-0}" -eq 1 ]; then
-        python $PYTHON_CMD_ARGS
+        python $PYTHON_CMD_ARGS "$@"
     elif command -v conda >/dev/null 2>&1; then
-        conda run -p "$VENV_PATH" --no-capture-output python $PYTHON_CMD_ARGS
+        conda run -p "$VENV_PATH" --no-capture-output python $PYTHON_CMD_ARGS "$@"
     else
         # Try to use python binary inside the venv
         if [ -x "$VENV_PATH/bin/python" ]; then
-            "$VENV_PATH/bin/python" $PYTHON_CMD_ARGS
+            "$VENV_PATH/bin/python" $PYTHON_CMD_ARGS "$@"
         else
-            echo -e "${RED}❌ No python executable found to run the generator${NC}"
+            echo -e "${RED}❌ No python executable found to run the training${NC}"
             exit 1
         fi
     fi
@@ -155,20 +108,17 @@ run_python() {
 # Show configuration (we don't accept CLI args; configs must come from Hydra)
 echo ""
 echo -e "${BLUE}Configuration: (from Hydra configs)${NC}"
-echo -e "  Input directory: ${YELLOW}(from config file)${NC}"
-echo -e "  Generator type: ${YELLOW}(from config file)${NC}"
-echo -e "  Model: ${GREEN}gpt-4o${NC}"
-if [ -n "$GPU_ID" ]; then
-    echo -e "  GPU: ${GREEN}${GPU_ID}${NC}"
-else
-    echo -e "  GPU: ${YELLOW}default${NC}"
-fi
+echo -e "  Model: ${YELLOW}SmolVLM2-2.2B-Instruct${NC}"
+echo -e "  Data: ${YELLOW}Assembly101 (with DST labels)${NC}"
+echo -e "  Context Strategy: ${YELLOW}summarize_with_dst${NC}"
+echo -e "  Training Type: ${GREEN}PROSPECT DST Multi-task${NC}"
 echo ""
 
-# Run the generator (no CLI overrides; Hydra config controls behavior)
-echo -e "${BLUE}🚀 Starting DST generation (Hydra-controlled)...${NC}"
+
+# Run the training (no CLI overrides; Hydra config controls behavior)
+echo -e "${BLUE}🚀 Starting PROSPECT DST training (Hydra-controlled)...${NC}"
 echo -e "${BLUE}📂 Running from: $(pwd)${NC}"
-echo -e "${BLUE}🐍 Python module: dst_data_builder.simple_dst_generator ${NC}"
+echo -e "${BLUE}🐍 Python module: prospect.train.dst_training_prospect ${NC}"
 echo ""
 
 run_python
@@ -176,9 +126,10 @@ run_python
 # Check exit code
 if [ $? -eq 0 ]; then
     echo ""
-    echo -e "${GREEN}✅ DST generation completed successfully!${NC}"
+    echo -e "${GREEN}✅ PROSPECT DST training completed successfully!${NC}"
+    echo -e "${GREEN}📁 Results saved to: custom/outputs/prospect/dst_training/${NC}"
 else
     echo ""
-    echo -e "${RED}❌ DST generation failed!${NC}"
+    echo -e "${RED}❌ PROSPECT DST training failed!${NC}"
     exit 1
 fi

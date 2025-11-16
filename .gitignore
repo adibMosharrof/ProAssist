@@ -144,3 +144,5 @@ ProAssist-Dataset/
 
 custom/outputs
 ego4d/
+
+wandb/

@@ -7,9 +7,15 @@ defaults:
   - generator: proassist_label
   - model: gpt4o
   # - model: claude4_5
+# Generation configuration for SPEAK/DST integration
+generation:
+  enable_speak_dst_integration: true   # Enable enhanced SPEAK/DST format with all events
+  evidence_spans: false                # Include video evidence spans for DST updates
+  enable_multiprocessing: true        # Enable parallel processing (SSL context fix implemented)
+  multiprocessing_processes: 12       # Number of processes for multiprocessing (based on 24GB memory)
 
 max_retries: 1
-# Logging
+
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

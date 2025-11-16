@@ -65,17 +65,25 @@ class ProAssistDSTLabelGenerator(BaseGPTGenerator):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.generator_cfg = generator_cfg or {}
 
-        # Load models for semantic similarity and NLI
-        self.logger.info("Loading sentence embedding model...")
-        self.encoder = SentenceTransformer("BAAI/bge-base-en-v1.5")
-
-        self.logger.info("Loading NLI cross-encoder model...")
-        self.nli_model = CrossEncoder("cross-encoder/nli-deberta-v3-base")
+        # Initialize models as None (lazy loading for multiprocessing compatibility)
+        self.encoder = None
+        self.nli_model = None
 
         # Hyperparameters
         self.alpha = 0.6  # Joint score weight for semantic vs NLI
         self.positional_prior_lambda = 0.1
         self.positional_prior_sigma = 0.25
+
+    def _ensure_models_loaded(self):
+        """Ensure models are loaded (lazy loading for multiprocessing)"""
+        # Suppress verbose sentence_transformers logs
+        logging.getLogger('sentence_transformers').setLevel(logging.WARNING)
+
+        if not hasattr(self, 'encoder') or self.encoder is None:
+            self.encoder = SentenceTransformer("BAAI/bge-base-en-v1.5")
+
+        if not hasattr(self, 'nli_model') or self.nli_model is None:
+            self.nli_model = CrossEncoder("cross-encoder/nli-deberta-v3-base")
 
     async def _try_generate_and_validate(
         self,
@@ -103,6 +111,9 @@ class ProAssistDSTLabelGenerator(BaseGPTGenerator):
         Main pipeline: parse blocks, embed, score, DP assignment, merge, output.
         Returns list of TSV row dicts.
         """
+        # Ensure models are loaded (handles both single and multiprocess scenarios)
+        self._ensure_models_loaded()
+        
         inferred_knowledge = input_data.get('inferred_knowledge', '')
         all_step_descriptions = input_data.get('all_step_descriptions', '')
 

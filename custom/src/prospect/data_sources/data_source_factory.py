@@ -5,6 +5,7 @@ from typing import Any
 from omegaconf import DictConfig, OmegaConf
 
 from prospect.data_sources.proassist_video_dataset import ProAssistVideoDataset
+from prospect.data_sources.dst_training_dataset import DSTTrainingDataset
 
 
 logger = logging.getLogger(__name__)
@@ -14,7 +15,7 @@ class DataSourceFactory:
     """Factory for creating data source datasets"""
     
     @staticmethod
-    def create_dataset(data_source_cfg: DictConfig) -> ProAssistVideoDataset:
+    def create_dataset(data_source_cfg: DictConfig):
         """
         Create dataset from Hydra configuration
         
@@ -34,5 +35,11 @@ class DataSourceFactory:
             # Remove 'name' from kwargs before passing to constructor
             cfg_dict.pop("name", None)
             return ProAssistVideoDataset(**cfg_dict)
+        
+        elif data_source_name == "dst_training":
+            # Remove 'name' from kwargs before passing to constructor
+            cfg_dict.pop("name", None)
+            return DSTTrainingDataset(**cfg_dict)
+        
         else:
             raise ValueError(f"Unknown data source: {data_source_name}")

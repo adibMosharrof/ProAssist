@@ -22,3 +22,7 @@ Below are guidelines on how to code.
 - I have hydra configs to change parameters.
 - All outputs must be saved inside the hydra out dir.
 - Use python from ./.venv
+
+### Important Terminology
+- **DST = Dialog State Tracking** (NOT Daylight Saving Time)
+- In this project, DST refers to tracking the state of dialogue elements (steps, tasks) in conversational AI, not time zone adjustments

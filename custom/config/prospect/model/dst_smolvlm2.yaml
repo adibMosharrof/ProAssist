@@ -1,0 +1,39 @@
+# DST SmolVLM2 Model Configuration
+
+name: "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
+log_name: "dst-smolvlm2-2.2b"
+device: "cuda"
+torch_dtype: "bfloat16"
+
+# Generation parameters
+max_new_tokens: 100
+temperature: 0.7
+top_p: 0.9
+do_sample: true
+
+# Cache directory (important for your setup)
+cache_dir: "/u/siddique-d1/adib/.cache/huggingface"
+
+# DST-specific configuration
+num_dst_states: 3  # Always 3 states for DST training: Not Started, In Progress, Completed
+dst_update_loss_weight: 1.0
+dst_state_loss_weight: 1.0
+speaking_loss_weight: 1.0
+
+# Training parameters
+hidden_size: 2816
+max_seq_len: 4096
+reserved_seq_len: 128
+gradient_accumulation_steps: 8
+learning_rate: 1e-5
+num_epochs: 10
+weight_decay: 0.01
+warmup_steps: 1000
+
+# Data parameters
+batch_size: 2  # For 24GB RTX setup
+num_workers: 4
+fps: 2
+
+# Model type (DST heads are always included)
+model_type: "dst_smolvlm_with_strategies"

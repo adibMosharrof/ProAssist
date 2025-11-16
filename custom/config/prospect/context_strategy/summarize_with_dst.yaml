@@ -1,0 +1,21 @@
+# Summarize with DST Context Strategy
+# Generate DST-guided text summary of progress, then drop all KV cache
+
+type: summarize_with_dst
+
+# Maximum length for generated summary
+summary_max_length: 256
+
+# DST file with annotations (TSV format)
+dst_file: ${data.dst_annotation_path}/dst_assembly101.tsv
+
+# Structured prompt for DST-guided summarization
+summary_prompt:
+  role: "system"
+  content: "Watch the user's actions and track the task progress using DST annotations. Provide a structured summary including completed steps, current step, and next steps."
+
+# Optional: Initial system prompt to prepend to summary
+initial_sys_prompt: "You are a proactive assistant helping with task completion using dialogue state tracking."
+
+# Optional: Task knowledge to append to summary
+task_knowledge: "The task involves assembling components in a specific order with clear task state transitions."

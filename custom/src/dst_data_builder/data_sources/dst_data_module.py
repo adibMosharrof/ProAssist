@@ -93,7 +93,7 @@ class DSTDataModule:
             raise ValueError("data_path must be provided for proassist data source")
 
         datasets = cfg.get("datasets", [])
-        suffix = cfg.get("suffix", "_filtered")
+        suffix = cfg.get("suffix", "")
         num_rows = cfg.get("num_rows")
 
         if not datasets:
