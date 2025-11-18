@@ -8,11 +8,29 @@ import logging
 from tqdm import tqdm
 
 from dst_data_builder.dst_data_processor import DSTDataProcessor
-from dst_data_builder.gpt_generators.proassist_label_generator import ProAssistDSTLabelGenerator
-from dst_data_builder.gpt_generators.speak_dst_generator import SpeakDSTGenerator
+from dst_data_builder.gpt_generators.proassist_label_generator import (
+    ProAssistDSTLabelGenerator,
+)
+from dst_data_builder.validators.training_format_validator import (
+    TrainingFormatValidator,
+)
+
+# Training modules
+from dst_data_builder.training_modules import SpeakDSTGenerator
+from dst_data_builder.training_modules.dst_event_grounding import DSTEventGrounding
+from dst_data_builder.training_modules.conversation_splitter import ConversationSplitter
+from dst_data_builder.training_modules.dataset_metadata_generator import (
+    DatasetMetadataGenerator,
+)
+from dst_data_builder.training_modules.sequence_length_calculator import (
+    SequenceLengthCalculator,
+)
+from dst_data_builder.training_modules.frame_integration import FrameIntegration
+from dst_data_builder.training_modules.dst_state_tracker import DSTStateTracker
+
 
 class SimpleDSTGenerator:
-    """Simple DST generator that adds dst labels to existing JSON data"""
+    """Simple Dialog State Tracing (DST) generator that adds DST labels to existing JSON data"""
 
     def __init__(self, cfg: DictConfig):
         self.cfg = cfg
@@ -26,46 +44,182 @@ class SimpleDSTGenerator:
             max_retries=cfg.max_retries,
         )
 
-        # Initialize SpeakDST generator for enhanced format if enabled
-        self.speak_dst_enabled = cfg.get('generation', {}).get('enable_speak_dst_integration', False)
-        if self.speak_dst_enabled:
-            speak_dst_config = {
-                'evidence_spans': cfg.get('generation', {}).get('evidence_spans', False),
-                'disable_progress_bars': True,  # Disable nested progress bars
-            }
-            self.speak_dst_generator = SpeakDSTGenerator(speak_dst_config)
-            self.logger.info("🔄 SPEAK/DST integration enabled with enhanced format")
-        else:
-            self.speak_dst_generator = None
-            self.logger.info("📝 Using original format with basic DST annotations")
+        # Initialize training data creation modules first
+        self._initialize_training_modules()
 
         # Initialize DST data processor with generators
         self.data_processor = DSTDataProcessor(
             dst_generator=self.dst_generator,
             speak_dst_generator=self.speak_dst_generator,
             logger=self.logger,
-            is_multiprocessing=cfg.get('generation', {}).get('enable_multiprocessing', False),
-            num_processes=cfg.get('generation', {}).get('multiprocessing_processes', None)
+            is_multiprocessing=cfg.get("generation", {}).get(
+                "enable_multiprocessing", False
+            ),
+            num_processes=cfg.get("generation", {}).get(
+                "multiprocessing_processes", None
+            ),
         )
+
+    def _initialize_training_modules(self):
+        """Initialize all training data creation modules"""
+        self.logger.info("🔄 Initializing training data creation modules...")
+
+        # Initialize all training modules
+        training_config = self.cfg.get("training_creation", {})
+
+        self.frame_integration = FrameIntegration(training_config)
+        self.sequence_calculator = SequenceLengthCalculator(training_config)
+        self.conversation_splitter = ConversationSplitter(training_config)
+        self.dst_state_tracker = DSTStateTracker(training_config)
+        self.speak_dst_generator = SpeakDSTGenerator(training_config)
+        self.dst_grounding = DSTEventGrounding(training_config)
+        self.metadata_generator = DatasetMetadataGenerator(training_config)
+
+        self.training_modules = {
+            "frame_integration": self.frame_integration,
+            "sequence_calculator": self.sequence_calculator,
+            "conversation_splitter": self.conversation_splitter,
+            "dst_state_tracker": self.dst_state_tracker,
+            "enhanced_speak_dst": self.speak_dst_generator,
+            "dst_grounding": self.dst_grounding,
+            "metadata_generator": self.metadata_generator,
+        }
+
+        # Initialize training format validators
+        self.training_validators = [TrainingFormatValidator()]
+        self.logger.info("🔍 Training format validators initialized")
+
+        self.logger.info("✅ All training modules initialized successfully")
+
+    def create_training_format(
+        self, enhanced_data: list, dataset_name: str, split: str
+    ) -> list:
+        """
+        Create training data directly from enhanced DST data
+
+        Args:
+            enhanced_data: List of enhanced DST data items
+            dataset_name: Name of the dataset
+            split: Data split (train/val/test)
+
+        Returns:
+            List of training data samples
+        """
+        if not self.training_modules:
+            self.logger.warning(
+                "Training modules not initialized, returning enhanced data"
+            )
+            return enhanced_data
+
+        training_samples = []
+        validation_stats = {"valid": 0, "invalid": 0, "errors": []}
+
+        for video_data in enhanced_data:
+            # 1. Add frame information
+            video_data = self.frame_integration.add_frame_metadata(
+                video_data, dataset_name
+            )
+
+            # 2. Create training conversation structure
+            video_data = self.speak_dst_generator.create_training_conversation(
+                video_data
+            )
+
+            # 3. Track DST state throughout conversation for accurate splitting
+            video_data = self.dst_state_tracker.track_dst_transitions(video_data)
+
+            # 4. Split long conversations into multiple training samples
+            conversation_segments = self.conversation_splitter.split_conversations(
+                video_data
+            )
+
+            # 5. Process each conversation segment
+            for segment_idx, segment_data in enumerate(conversation_segments):
+                # Inject correct initial DST state for this segment
+                segment_data = self.dst_state_tracker.inject_initial_dst_state(
+                    segment_data, segment_idx
+                )
+
+                # Add frame grounding and labels
+                segment_data = self.dst_grounding.add_frames_and_labels(segment_data)
+
+                # Calculate sequence lengths for this specific segment
+                segment_data = self.sequence_calculator.add_sequence_metadata(
+                    segment_data
+                )
+
+                # Add dataset metadata with proper clip_idx
+                segment_data = self.metadata_generator.add_training_metadata(
+                    segment_data, dataset_name, split, clip_idx=segment_idx
+                )
+
+                # Validate training format before adding to samples
+                if self.training_validators:
+                    is_valid = True
+                    error_msgs = []
+
+                    # Run all validators
+                    for validator in self.training_validators:
+                        validator_valid, validator_error = validator.validate(segment_data)
+                        if not validator_valid:
+                            is_valid = False
+                            error_msgs.append(validator_error)
+
+                    if is_valid:
+                        training_samples.append(segment_data)
+                        validation_stats["valid"] += 1
+                        self.logger.debug(f"✅ Valid training sample {segment_idx}")
+                    else:
+                        validation_stats["invalid"] += 1
+                        combined_error = "; ".join(error_msgs)
+                        validation_stats["errors"].append(combined_error)
+                        self.logger.warning(
+                            f"❌ Invalid training sample {segment_idx}: {combined_error}"
+                        )
+                else:
+                    # If validators not available, include without validation
+                    training_samples.append(segment_data)
+
+        # Log validation summary
+        total_samples = validation_stats["valid"] + validation_stats["invalid"]
+        if total_samples > 0:
+            validation_rate = validation_stats["valid"] / total_samples
+            self.logger.info(
+                f"📊 Training format validation: {validation_stats['valid']}/{total_samples} valid "
+                f"({validation_rate:.1%})"
+            )
+
+            if validation_stats["errors"]:
+                unique_errors = list(set(validation_stats["errors"]))
+                self.logger.warning(
+                    f"🔍 Validation errors found: {len(unique_errors)} unique issues"
+                )
+                for error in unique_errors[:3]:  # Show first 3 unique errors
+                    self.logger.warning(f"  • {error}")
+
+        self.logger.info(
+            f"Created {len(training_samples)} training samples from {len(enhanced_data)} enhanced items"
+        )
+        return training_samples
 
     def run(self, cfg: DictConfig) -> None:
         """Run the DST generation process with the given configuration"""
-        
+
         # Get configuration
         datasets = cfg.data_source.datasets
-        splits = ['train', 'val', 'test']
-        num_rows = cfg.data_source.get('num_rows', 2)
-        
+        splits = ["train", "val", "test"]
+        num_rows = cfg.data_source.num_rows
+
         self.logger.info("🚀 Starting Simple DST Generation")
         self.logger.info(f"📊 Datasets: {datasets}")
         self.logger.info(f"🔄 Splits: {splits}")
         self.logger.info(f"📝 Rows per dataset/split: {num_rows}")
-        
+
         # Get Hydra's runtime output directory
         hydra_cfg = HydraConfig.get()
         hydra_output_dir = hydra_cfg.runtime.output_dir
         output_base_dir = Path(hydra_output_dir)
-        
+
         self.logger.info("📁 Output directory: %s", output_base_dir.resolve())
 
         total_processed = 0
@@ -75,7 +229,12 @@ class SimpleDSTGenerator:
         total_datasets = len(datasets)
         total_splits = len(splits)
 
-        with tqdm(total=total_datasets, desc="📊 Processing datasets", unit="dataset", position=0) as dataset_pbar:
+        with tqdm(
+            total=total_datasets,
+            desc="📊 Processing datasets",
+            unit="dataset",
+            position=0,
+        ) as dataset_pbar:
             for dataset_idx, dataset_name in enumerate(datasets):
                 dataset_pbar.set_description(f"📊 Processing dataset: {dataset_name}")
 
@@ -84,23 +243,54 @@ class SimpleDSTGenerator:
                 dataset_output_dir.mkdir(exist_ok=True, parents=True)
 
                 # Process splits within this dataset
-                with tqdm(total=total_splits, desc=f"🔄 {dataset_name} splits",
-                         unit="split", position=1, leave=False) as split_pbar:
+                with tqdm(
+                    total=total_splits,
+                    desc=f"🔄 {dataset_name} splits",
+                    unit="split",
+                    position=1,
+                    leave=False,
+                ) as split_pbar:
                     for split_idx, split in enumerate(splits):
-                        try:
-                            split_pbar.set_description(f"🔄 Processing {dataset_name}/{split}")
-                            processed, failed = self.data_processor.process_dataset_split(
-                                dataset_name, split, num_rows, dataset_output_dir
-                            )
-                            total_processed += processed
-                            total_failed += failed
-                            split_pbar.set_postfix({
-                                '✅ Processed': total_processed,
-                                '❌ Failed': total_failed
-                            })
+                        split_pbar.set_description(
+                            f"🔄 Processing {dataset_name}/{split}"
+                        )
+                        processed, failed = self.data_processor.process_dataset_split(
+                            dataset_name, split, num_rows, dataset_output_dir
+                        )
+                        total_processed += processed
+                        total_failed += failed
 
-                        except Exception as e:
-                            self.logger.error(f"❌ Failed to process {dataset_name}/{split}: {e}")
+                        self.logger.info(
+                            f"Creating training format for {dataset_name}/{split}"
+                        )
+                        # Load enhanced data
+                        enhanced_file = dataset_output_dir / f"{split}.json"
+                        if enhanced_file.exists():
+                            with open(enhanced_file, "r") as f:
+                                enhanced_data = json.load(f)
+
+                            # Create training format
+                            training_data = self.create_training_format(
+                                enhanced_data, dataset_name, split
+                            )
+
+                            # Save training format
+                            training_file = (
+                                dataset_output_dir / f"{split}_training.json"
+                            )
+                            with open(training_file, "w") as f:
+                                json.dump(training_data, f, indent=2)
+
+                            self.logger.info(
+                                f"✅ Created training format: {training_file}"
+                            )
+
+                        split_pbar.set_postfix(
+                            {
+                                "✅ Processed": total_processed,
+                                "❌ Failed": total_failed,
+                            }
+                        )
 
                         split_pbar.update(1)
 
@@ -112,8 +302,11 @@ class SimpleDSTGenerator:
         self.logger.info("📁 Output directory: %s", output_base_dir)
 
 
-
-@hydra.main(config_path="../../config/dst_data_generator", config_name="simple_dst_generator", version_base=None)
+@hydra.main(
+    config_path="../../config/dst_data_generator",
+    config_name="simple_dst_generator",
+    version_base=None,
+)
 def main(cfg: DictConfig) -> None:
     """Main function with Hydra configuration"""
     logger = logging.getLogger(__name__)

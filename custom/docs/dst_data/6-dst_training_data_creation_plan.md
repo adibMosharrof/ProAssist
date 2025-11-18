@@ -79,7 +79,7 @@ training_creation:
 **Key Functions**:
 - `split_long_conversations()`: Split conversations at assistant turns when approaching `max_seq_len`
 - `calculate_sequence_length()`: Track token count as conversation builds
-- `maintain_context_overlap()`: Keep video context when splitting (configurable seconds)
+- `_create_overlap_context()`: Create 5-20 second overlap context between segments for continuity
 - `generate_clip_indices()`: Assign incremental `clip_idx` for each split segment
 - `compute_dst_state_at_split()`: Calculate correct DST state at the start of each clip
 - `inject_initial_dst_state()`: Add initial DST state to clip metadata or system prompt
@@ -186,14 +186,7 @@ training_creation:
 
 ```
 
-The system prompts variations are extracted into a separate python file and will be used during prompt generation.
-```yaml
-system_prompt_variations:  # Multiple prompt variations for diversity (following ProAssist)
-- "You are a helpful assistant."
-- "You are a proactive assistant. Pay close attention to the user's actions and provide relevant information proactively."
-- "You are a helpful and proactive assistant. Always be ready to assist and provide useful information ahead of time."
-- "You are an assistant that anticipates user needs. Provide assistance before being asked when appropriate."
-```
+The system prompts variations are extracted into a separate Python file (`system_prompts.py`) for better organization and maintainability. The variations are imported during prompt generation.
 
 
 ### 5. DST Event Grounding & Labeling Module

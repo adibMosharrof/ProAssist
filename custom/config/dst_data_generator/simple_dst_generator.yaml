@@ -9,10 +9,40 @@ defaults:
   # - model: claude4_5
 # Generation configuration for SPEAK/DST integration
 generation:
-  enable_speak_dst_integration: true   # Enable enhanced SPEAK/DST format with all events
   evidence_spans: false                # Include video evidence spans for DST updates
-  enable_multiprocessing: true        # Enable parallel processing (SSL context fix implemented)
+  enable_multiprocessing: false        # Enable parallel processing (SSL context fix implemented)
   multiprocessing_processes: 12       # Number of processes for multiprocessing (based on 24GB memory)
+# Training data creation configuration
+training_creation:
+  # Frame integration
+  fps: 2                              # Frames per second for frame index calculation
+  dst_frame_duration: 2               # Frames to show for each DST event (seconds)
+
+  # Sequence calculation
+  max_seq_len: 4096                   # SmolVLM sequence limit
+  num_tokens_per_img: 1               # Tokens per frame
+  tokenizer_name: "HuggingFaceTB/SmolVLM2-2.2B-Instruct"  # For token counting
+  special_tokens_count: 10            # Special tokens and formatting overhead
+
+  # Conversation splitting
+  enable_conversation_splitting: true # Enable conversation splitting for long sequences
+  keep_context_length: [5, 20]        # Min/max seconds of video context overlap when splitting
+
+  # Conversation creation
+  conversation_format: "proassist_training"  # vs "enhanced_dst"
+  include_system_prompt: true         # Add ProAssist system prompts
+
+  # DST grounding
+  enable_dst_labels: true             # Generate DST-specific labels
+  validate_transitions: true          # Validate DST transition rules
+
+  # Dataset metadata
+  include_quality_metrics: true       # Include quality scores for filtering
+  add_knowledge: false                 # Whether knowledge was added to prompts
+
+# Output format control
+output:
+  save_intermediate: true             # Save enhanced format before training conversion
 
 max_retries: 1
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #######################################################
-# ProAssist DST Label Generator Runner
+# DST Data Generator Runner
 # Uses semantic alignment (bi-encoder + NLI) to generate
 # step timestamps from procedural annotations
 #######################################################
@@ -10,7 +10,7 @@ set -e
 
 # Print header
 echo "╔══════════════════════════════════════════════╗"
-echo "║   ProAssist DST Label Generator Runner       ║"
+echo "║   DST Data Generator Runner       ║"
 echo "╚══════════════════════════════════════════════╝"
 echo ""
 
@@ -82,4 +82,4 @@ cd "$PROJECT_ROOT"
 
 $PYTHON_CMD -m dst_data_builder.simple_dst_generator 
 echo ""
-echo "✅ ProAssist DST label generation completed successfully!"
+echo "✅ DST data generation completed successfully!"

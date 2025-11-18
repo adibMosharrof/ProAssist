@@ -10,5 +10,12 @@ from .base_validator import BaseValidator
 from .structure_validator import StructureValidator
 from .timestamps_validator import TimestampsValidator
 from .id_validator import IdValidator
+from .training_format_validator import TrainingFormatValidator
 
-__all__ = ["BaseValidator", "StructureValidator", "TimestampsValidator", "IdValidator"]
+__all__ = [
+    "BaseValidator",
+    "StructureValidator",
+    "TimestampsValidator",
+    "IdValidator",
+    "TrainingFormatValidator",
+]
