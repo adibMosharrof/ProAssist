@@ -14,9 +14,7 @@ from typing import Dict, List, Any, Tuple, Optional
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor
 
-from dst_data_builder.gpt_generators.proassist_label_generator import (
-    ProAssistDSTLabelGenerator,
-)
+from dst_data_builder.gpt_generators.base_gpt_generator import BaseGPTGenerator
 from dst_data_builder.training_modules.speak_dst_generator import SpeakDSTGenerator
 
 
@@ -27,14 +25,13 @@ class DSTDataProcessor:
     Responsibilities:
     - Load and limit input JSON data
     - Process videos into individual conversation training examples
-    - Generate DST labels using ProAssistDSTLabelGenerator
     - Apply SPEAK/DST transformation (if enabled)
     - Save processed data to output files
     """
 
     def __init__(
         self,
-        dst_generator: ProAssistDSTLabelGenerator,
+        dst_generator: BaseGPTGenerator,
         speak_dst_generator: Optional[SpeakDSTGenerator] = None,
         logger: Optional[logging.Logger] = None,
         is_multiprocessing: bool = False,
@@ -53,34 +50,44 @@ class DSTDataProcessor:
         Process a single video (for parallelization)
         Returns: (processed_conversations, failed_count)
         """
-        # Step 1: Ensure models are loaded for this worker process
-        self.dst_generator._ensure_models_loaded()
+        try:
+            # Step 1: Ensure models are loaded for this worker process
+            self.dst_generator._ensure_models_loaded()
 
-        # Step 2: Generate DST labels for this video
-        dst_labels = self._generate_dst_labels(video_data, video_index, dataset_name)
-
-        # Step 3: Extract conversations and process them
-        conversations = video_data.get("conversations", [])
-        if not conversations:
-            self.logger.warning(f"⚠️ No conversations found for video {video_index}")
-            return [], 0
-
-        processed_conversations = []
-
-        for conv_idx, conversation in enumerate(conversations):
-            conversation_example = self._create_conversation_example(
-                video_data, conversation, dst_labels, video_index, conv_idx
+            # Step 2: Generate DST labels for this video
+            dst_labels = self._generate_dst_labels(
+                video_data, video_index, dataset_name
             )
 
-            # Apply SPEAK/DST transformation if enabled
-            if self.speak_dst_generator:
-                conversation_example = self._apply_speak_dst_transformation(
-                    conversation_example
+            # Step 3: Extract conversations and process them
+            conversations = video_data.get("conversations", [])
+            if not conversations:
+                self.logger.warning(f"⚠️ No conversations found for video {video_index}")
+                return [], 0
+
+            processed_conversations = []
+
+            for conv_idx, conversation in enumerate(conversations):
+                conversation_example = self._create_conversation_example(
+                    video_data, conversation, dst_labels, video_index, conv_idx
                 )
 
-            processed_conversations.append(conversation_example)
+                # Apply SPEAK/DST transformation if enabled
+                if self.speak_dst_generator:
+                    conversation_example = self._apply_speak_dst_transformation(
+                        conversation_example
+                    )
 
-        return processed_conversations, 0
+                processed_conversations.append(conversation_example)
+
+            return processed_conversations, 0
+
+        except Exception as e:
+            self.logger.error(
+                f"❌ Failed to process video {video_index} ({dataset_name}): {e}"
+            )
+            # Return empty list and count as 1 failure
+            return [], 1
 
     def process_dataset_split(
         self, dataset_name: str, split: str, num_rows: int, output_dir: Path
@@ -215,10 +222,10 @@ class DSTDataProcessor:
         """Generate DST labels for a single video's data"""
 
         # Extract needed data from the video
-        inferred_knowledge = video_data.get("inferred_knowledge", "")
+        inferred_knowledge = video_data["inferred_knowledge"]
 
-        # Extract dialog from ALL conversations (preserve multi-conversation structure)
-        all_step_descriptions = self._extract_all_conversation_descriptions(video_data)
+        # Use the raw procedural annotations from all_step_descriptions field
+        all_step_descriptions = video_data["parsed_video_anns"]["all_step_descriptions"]
 
         # Prepare input data for the generator
         input_data = {
@@ -228,33 +235,6 @@ class DSTDataProcessor:
 
         # Generate DST labels using the deterministic alignment method
         return self.dst_generator._generate_dst_from_input_data(input_data)
-
-    def _extract_all_conversation_descriptions(self, video_data: dict) -> str:
-        """Extract conversation descriptions from all conversations in the video"""
-
-        all_step_descriptions = ""
-        conversations = video_data.get("conversations", [])
-        if conversations and len(conversations) > 0:
-            dialog_content = []
-            # Process ALL conversations, not just the first one
-            for conv_idx, conversation in enumerate(conversations):
-                conversation_items = conversation.get("conversation", [])
-                conv_user_type = conversation.get(
-                    "user_type", f"conversation_{conv_idx}"
-                )
-
-                # Extract content from all conversation items
-                for item in conversation_items:
-                    role = item.get("role", "")
-                    content = item.get("content", "")
-                    time = item.get("time", 0.0)
-                    if role and content:
-                        dialog_content.append(
-                            f"[{time:.1f}] {role}: {content} (from {conv_user_type})"
-                        )
-            all_step_descriptions = "\n".join(dialog_content)
-
-        return all_step_descriptions
 
     def _create_conversation_example(
         self,
@@ -369,7 +349,11 @@ def _process_video_worker(
 
     try:
         # Recreate generators from config (instead of passing instance)
-        dst_generator = ProAssistDSTLabelGenerator(**dst_generator_config)
+        from dst_data_builder.gpt_generators.gpt_generator_factory import (
+            GPTGeneratorFactory,
+        )
+
+        dst_generator = GPTGeneratorFactory.create_generator(**dst_generator_config)
 
         speak_dst_generator = None
         if speak_dst_config:
@@ -389,10 +373,11 @@ def _process_video_worker(
         return result
 
     except Exception as e:
-        logger.error(f"Error processing video {video_index}: {e}")
+        logger.error(f"❌ Error processing video {video_index}: {e}")
         # Ensure cleanup even on error
         _cleanup_worker_memory(processor)
-        raise e
+        # Return empty results and count as failure instead of raising
+        return [], 1
 
 
 def _cleanup_worker_memory(processor: DSTDataProcessor):

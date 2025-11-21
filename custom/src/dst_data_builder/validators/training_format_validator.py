@@ -72,10 +72,10 @@ class TrainingFormatValidator(BaseValidator):
                 return False, f"conversation[{i}] missing required 'content' field"
 
             role = turn.get("role", "")
-            if role not in ["system", "user", "assistant"]:
+            if role not in ["system", "user", "assistant", "DST_UPDATE"]:
                 return (
                     False,
-                    f"conversation[{i}] has invalid role '{role}'. Must be one of: system, user, assistant",
+                    f"conversation[{i}] has invalid role '{role}'. Must be one of: system, user, assistant, DST_UPDATE",
                 )
 
         # Validate numeric fields

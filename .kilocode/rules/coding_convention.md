@@ -8,8 +8,9 @@ Below are guidelines on how to code.
 - No relative imports.
 - All imports should be at the top of the file.
 - Follow object oriented design.
-- Try to reuse code, don't add duplicate code.
+- Try to keep classes small, dont bloat classes.
 - Maintain separation of concerns.
+- Try to reuse code, don't add duplicate code.
 - Create configs using hydra.
 - All outputs of a run should be inside the hydra run directory.
 - Don't add fallback methods, raise errors when things fail.
@@ -19,7 +20,6 @@ Below are guidelines on how to code.
 - If python code uses hydra, the outputs will be in a hydra output dir. Read the logs from the hydra out dir.
 
 ### Project Specific Guideline
-- Run the code by using custom/runner/run_proassist_label_generator.sh
 - I have hydra configs to change parameters.
 - All outputs must be saved inside the hydra out dir.
 - Use python from /u/siddique-d1/adib/ProAssist/.venv/bin/python

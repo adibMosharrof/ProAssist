@@ -12,6 +12,7 @@ from dst_data_builder.gpt_generators.base_gpt_generator import BaseGPTGenerator
 from dst_data_builder.gpt_generators.single_gpt_generator import SingleGPTGenerator
 from dst_data_builder.gpt_generators.batch_gpt_generator import BatchGPTGenerator
 from dst_data_builder.gpt_generators.proassist_label_generator import ProAssistDSTLabelGenerator
+from dst_data_builder.hybrid_dst.hybrid_dst_generator import HybridDSTLabelGenerator
 
 
 class GPTGeneratorFactory:
@@ -45,7 +46,7 @@ class GPTGeneratorFactory:
         """
 
         # Validate generator type
-        valid_types = ["single", "batch", "proassist_label"]
+        valid_types = ["single", "batch", "proassist_label", "hybrid_dst"]
         if generator_type.lower() not in valid_types:
             raise ValueError(
                 f"Unsupported generator type: {generator_type}. Supported types: {', '.join(valid_types)}"
@@ -97,6 +98,16 @@ class GPTGeneratorFactory:
         elif generator_type.lower() == "proassist_label":
             # ProAssist DST Label Generator (semantic alignment-based)
             return ProAssistDSTLabelGenerator(
+                generator_type=generator_type,
+                model_name=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                max_retries=max_retries,
+                generator_cfg=generator_cfg,
+            )
+        elif generator_type.lower() == "hybrid_dst":
+            # Hybrid DST Label Generator (two-phase similarity + LLM fallback)
+            return HybridDSTLabelGenerator(
                 generator_type=generator_type,
                 model_name=model_name,
                 temperature=temperature,

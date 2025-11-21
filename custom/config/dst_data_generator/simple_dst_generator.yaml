@@ -4,7 +4,7 @@ defaults:
   - data_source: proassist
   # - generator: batch
   # - generator: single
-  - generator: proassist_label
+  - generator: hybrid_dst
   - model: gpt4o
   # - model: claude4_5
 # Generation configuration for SPEAK/DST integration
@@ -42,7 +42,7 @@ training_creation:
 
 # Output format control
 output:
-  save_intermediate: true             # Save enhanced format before training conversion
+  save_intermediate: true            # Save enhanced format before training conversion
 
 max_retries: 1
 

@@ -12,7 +12,9 @@ from typing import Dict, Any, List, Optional, Tuple
 from omegaconf import DictConfig
 from dataclasses import dataclass
 
-from dst_data_builder.training_modules.system_prompts import get_system_prompt_variations
+from dst_data_builder.training_modules.system_prompts import (
+    get_system_prompt_variations,
+)
 
 
 @dataclass
@@ -72,12 +74,23 @@ class SpeakDSTGenerator:
         # Create training conversation with system prompt
         training_conversation = []
 
-        # Add system prompt if enabled
-        if self.include_system_prompt:
+        # Check if conversation already has a system prompt
+        has_system_prompt = any(turn.get("role") == "system" for turn in conversation)
+
+        # Add system prompt if enabled and not already present
+        if self.include_system_prompt and not has_system_prompt:
             system_prompt = self._create_system_prompt(video_data)
             training_conversation.append({"role": "system", "content": system_prompt})
 
-        # Process conversation turns
+        # Add DST_UPDATE events from DST spans if available
+        dst_events = self._create_dst_update_events(video_data)
+        if dst_events:
+            training_conversation.extend(dst_events)
+            self.logger.debug(
+                f"Added {len(dst_events)} DST_UPDATE events to conversation"
+            )
+
+        # Process existing conversation turns
         for turn in conversation:
             processed_turn = self._process_conversation_turn(turn, video_data)
             if processed_turn:
@@ -85,6 +98,9 @@ class SpeakDSTGenerator:
             elif processed_turn is None:
                 # Skip turns that should be filtered out
                 continue
+
+        # Sort conversation by timestamp to ensure proper chronological order
+        training_conversation = self._sort_conversation_by_time(training_conversation)
 
         # Update video data with training conversation
         video_data["conversation"] = training_conversation
@@ -200,6 +216,8 @@ class SpeakDSTGenerator:
             return self._process_assistant_turn(turn)
         elif role == "system":
             return self._process_system_turn(turn)
+        elif role == "DST_UPDATE":
+            return self._process_dst_update_turn(turn)
         else:
             # Unknown turn type, include as-is but log warning
             self.logger.warning(f"Unknown turn type: {role}")
@@ -241,26 +259,12 @@ class SpeakDSTGenerator:
 
     def _process_dst_update_turn(self, turn: Dict[str, Any]) -> Dict[str, Any]:
         """Process DST_UPDATE turn for training format"""
-        # DST_UPDATE turns are typically converted to assistant responses
-        # that reflect the state changes
-        content = turn.get("content", [])
-
-        # Generate descriptive content for DST state changes
-        descriptive_content = self._generate_dst_description(content)
-
-        processed_turn = {"role": "assistant", "content": descriptive_content}
+        # Keep DST_UPDATE turns as-is, just ensure proper structure
+        processed_turn = {"role": "DST_UPDATE", "content": turn.get("content", [])}
 
         # Add timestamp if available
         if "time" in turn:
             processed_turn["time"] = turn["time"]
-
-        # Add DST-specific labels
-        if self.training_config.get("enable_dst_labels", True):
-            dst_labels = self._generate_dst_labels(content)
-            processed_turn["labels"] = dst_labels
-
-        # Preserve original DST content for reference
-        processed_turn["dst_content"] = content
 
         return processed_turn
 
@@ -419,3 +423,101 @@ class SpeakDSTGenerator:
         validation_result["valid"] = len(validation_result["errors"]) == 0
 
         return validation_result
+
+    def _create_dst_update_events(
+        self, video_data: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """
+        Create DST_UPDATE events from DST spans for inclusion in conversation
+
+        Args:
+            video_data: Video data containing DST spans
+
+        Returns:
+            List of DST_UPDATE conversation turns
+        """
+        dst_events = []
+
+        # Get DST spans from video data
+        dst_spans = video_data.get("dst", [])
+        if not dst_spans:
+            return dst_events
+
+        # Get existing DST_UPDATE events to avoid duplication
+        existing_dst_events = set()
+        conversation = video_data.get("conversation", [])
+        for turn in conversation:
+            if turn.get("role") == "DST_UPDATE":
+                content = turn.get("content", [])
+                timestamp = turn.get("time", 0)
+                for item in content:
+                    if isinstance(item, dict):
+                        step_id = item.get("id", "")
+                        transition = item.get("transition", "")
+                        if step_id and transition:
+                            existing_dst_events.add((step_id, transition, timestamp))
+
+        # Convert each DST span to DST_UPDATE events (start and complete)
+        for span in dst_spans:
+            step_id = span.get("id", "")
+            start_ts = span.get("start_ts", 0)
+            end_ts = span.get("end_ts", 0)
+
+            # Validate that start_ts <= end_ts (temporal validation should have fixed this, but double-check)
+            if start_ts > end_ts:
+                self.logger.warning(
+                    f"Invalid span for {step_id}: start_ts ({start_ts}) > end_ts ({end_ts}). Skipping complete event."
+                )
+                end_ts = start_ts  # Fallback: don't create complete event if timestamps are invalid
+
+            # Create start event (if not already present)
+            if (step_id, "start", start_ts) not in existing_dst_events:
+                start_event = {
+                    "role": "DST_UPDATE",
+                    "time": start_ts,
+                    "content": [{"id": step_id, "transition": "start"}],
+                }
+                dst_events.append(start_event)
+
+            # Create complete event only if end_ts > start_ts (valid span duration)
+            if (
+                end_ts > start_ts
+                and (step_id, "complete", end_ts) not in existing_dst_events
+            ):
+                complete_event = {
+                    "role": "DST_UPDATE",
+                    "time": end_ts,
+                    "content": [{"id": step_id, "transition": "complete"}],
+                }
+                dst_events.append(complete_event)
+
+        # Sort DST events by time
+        dst_events.sort(key=lambda x: x.get("time", 0))
+
+        self.logger.debug(
+            f"Created {len(dst_events)} DST_UPDATE events from {len(dst_spans)} DST spans (start + complete transitions)"
+        )
+        return dst_events
+
+    def _sort_conversation_by_time(
+        self, conversation: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Sort conversation turns by timestamp to ensure chronological order
+
+        Args:
+            conversation: List of conversation turns
+
+        Returns:
+            Sorted conversation turns
+        """
+
+        def get_sort_key(turn):
+            # System prompts should come first
+            if turn.get("role") == "system":
+                return (0, 0)
+            # Use timestamp for other turns
+            return (1, turn.get("time", 0))
+
+        sorted_conversation = sorted(conversation, key=get_sort_key)
+        return sorted_conversation

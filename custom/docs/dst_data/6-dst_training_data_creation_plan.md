@@ -8,12 +8,15 @@ This document outlines the detailed implementation plan for adding training data
 
 **Key Differences from ProAssist**:
 - **Frame Information**: Embedded directly in conversation events (not separate "frames" turns)
+- **DST State Context**: Current DST state embedded in each conversation turn for model awareness
 - **Quality Scores**: Used only for filtering, not included in final training data
 - **DST State Tracking**: Uses DST state transitions instead of progress summaries
-- **Conversation Structure**: Maintains SPEAK/DST event format with embedded frame metadata
+- **Conversation Structure**: Maintains SPEAK/DST event format with embedded frame metadata and state context
 
 **Current State**: Enhanced DST data with SPEAK/DST events and DST snapshots
-**Target State**: Training format with embedded frame information and sequence management
+**Target State**: Training format with embedded frame information, DST state context, and sequence management
+
+**Critical Model Context**: Each conversation turn includes `dst_state` showing current progress of all steps, enabling the model to understand task completion status and make informed predictions about future DST transitions.
 
 ## Current Pipeline Architecture
 
@@ -144,13 +147,33 @@ training_creation:
 
 **Example State Tracking**:
 ```python
-# Conversation with DST transitions
+# Conversation with DST transitions and embedded state context
 turns = [
-    {"time": 10.0, "role": "DST_UPDATE", "content": [{"id": "S1", "transition": "start"}]},
-    {"time": 25.0, "role": "SPEAK", "content": "Working on step 1..."},
-    {"time": 40.0, "role": "DST_UPDATE", "content": [{"id": "S1", "transition": "complete"}]},
+    {
+        "time": 10.0,
+        "role": "DST_UPDATE",
+        "content": [{"id": "S1", "transition": "start"}],
+        "dst_state": {"S1": "in_progress", "S2": "not_started"}  # State after this transition
+    },
+    {
+        "time": 25.0,
+        "role": "SPEAK",
+        "content": "Working on step 1...",
+        "dst_state": {"S1": "in_progress", "S2": "not_started"}  # Current state context
+    },
+    {
+        "time": 40.0,
+        "role": "DST_UPDATE",
+        "content": [{"id": "S1", "transition": "complete"}],
+        "dst_state": {"S1": "completed", "S2": "not_started"}    # State after completion
+    },
     # ← Split point here
-    {"time": 55.0, "role": "DST_UPDATE", "content": [{"id": "S2", "transition": "start"}]},
+    {
+        "time": 55.0,
+        "role": "DST_UPDATE",
+        "content": [{"id": "S2", "transition": "start"}],
+        "dst_state": {"S1": "completed", "S2": "in_progress"}    # State after split
+    },
 ]
 
 # Clip 1 (turns 1-3): Initial state = {"S1": "not_started", "S2": "not_started"}
@@ -200,6 +223,7 @@ The system prompts variations are extracted into a separate Python file (`system
 - `calculate_event_frame_ranges()`: Convert event timestamps to frame indices using `floor(timestamp * fps)`
 - `validate_frame_availability()`: Ensure calculated frames exist within video bounds
 - `validate_dst_frame_alignment()`: Ensure DST frames align with conversation temporal flow
+- `compute_dst_context_at_turn()`: Calculate current DST state for each conversation turn
 - `generate_event_labels()`: Auto-generate initiative and intent labels for compatibility
 
 **Implementation Details**:
@@ -235,16 +259,59 @@ The system prompts variations are extracted into a separate Python file (`system
   {"role": "DST_UPDATE", "time": 67.8, "content": [{"id": "S1", "transition": "complete"}, {"id": "S2", "transition": "complete"}]}
 ]
 
-# Output: Frame information embedded directly in conversation events (NO separate frame turns)
+# Output: Frame information, DST state context, and labels embedded in conversation events
 [
-  {"role": "DST_UPDATE", "time": 15.5, "content": [{"id": "S1", "transition": "start"}], "start_frame": 31, "end_frame": 32},
-  {"role": "SPEAK", "time": 32.1, "content": "Beginning assembly...", "start_frame": 64, "end_frame": 65},
-  {"role": "DST_UPDATE", "time": 45.0, "content": [{"id": "S2", "transition": "start"}], "start_frame": 90, "end_frame": 91},
-  {"role": "SPEAK", "time": 58.7, "content": "Working on both steps...", "start_frame": 117, "end_frame": 118},
-  {"role": "DST_UPDATE", "time": 67.8, "content": [{"id": "S1", "transition": "complete"}, {"id": "S2", "transition": "complete"}], "start_frame": 135, "end_frame": 136}
+  {
+    "role": "DST_UPDATE",
+    "time": 15.5,
+    "content": [{"id": "S1", "transition": "start"}],
+    "start_frame": 31,
+    "end_frame": 32,
+    "dst_state": {"S1": "in_progress", "S2": "not_started"},
+    "labels": "initiative|dst_update,dst_start"
+  },
+  {
+    "role": "SPEAK",
+    "time": 32.1,
+    "content": "Beginning assembly...",
+    "start_frame": 64,
+    "end_frame": 65,
+    "dst_state": {"S1": "in_progress", "S2": "not_started"},
+    "labels": "initiative|instruction"
+  },
+  {
+    "role": "DST_UPDATE",
+    "time": 45.0,
+    "content": [{"id": "S2", "transition": "start"}],
+    "start_frame": 90,
+    "end_frame": 91,
+    "dst_state": {"S1": "in_progress", "S2": "in_progress"},
+    "labels": "initiative|dst_update,dst_start"
+  },
+  {
+    "role": "SPEAK",
+    "time": 58.7,
+    "content": "Working on both steps...",
+    "start_frame": 117,
+    "end_frame": 118,
+    "dst_state": {"S1": "in_progress", "S2": "in_progress"},
+    "labels": "initiative|instruction,info_sharing"
+  },
+  {
+    "role": "DST_UPDATE",
+    "time": 67.8,
+    "content": [{"id": "S1", "transition": "complete"}, {"id": "S2", "transition": "complete"}],
+    "start_frame": 135,
+    "end_frame": 136,
+    "dst_state": {"S1": "completed", "S2": "completed"},
+    "labels": "initiative|dst_update,dst_multiple"
+  }
 ]
 
-# Note: Unlike ProAssist which uses separate "frames" turns, frame info is embedded in conversation events
+# Key Features:
+# - Frame info embedded directly in conversation events (no separate "frames" turns)
+# - dst_state shows current progress context for model awareness
+# - Labels provide behavioral context for evaluation and training
 ```
 #### 5.1 Event Labeling for Format Compatibility
 
@@ -268,14 +335,39 @@ The system prompts variations are extracted into a separate Python file (`system
 
 **Label Examples**:
 ```python
-# SPEAK events (preserve existing labels)
-{"role": "SPEAK", "content": "Begin by...", "labels": "initiative|instruction"}
-{"role": "SPEAK", "content": "Good job!", "labels": "initiative|instruction,feedback"}
+# SPEAK events with DST state context (preserve existing labels)
+{
+  "role": "SPEAK",
+  "content": "Begin by...",
+  "labels": "initiative|instruction",
+  "dst_state": {"S1": "not_started", "S2": "not_started"}
+}
+{
+  "role": "SPEAK",
+  "content": "Good job!",
+  "labels": "initiative|instruction,feedback",
+  "dst_state": {"S1": "completed", "S2": "in_progress"}
+}
 
-# DST_UPDATE events (new meaningful labels)
-{"role": "DST_UPDATE", "content": [{"id": "S1", "transition": "start"}], "labels": "initiative|dst_update,dst_start"}
-{"role": "DST_UPDATE", "content": [{"id": "S1", "transition": "complete"}], "labels": "initiative|dst_update,dst_complete"}
-{"role": "DST_UPDATE", "content": [{"id": "S1", "transition": "complete"}, {"id": "S2", "transition": "start"}], "labels": "initiative|dst_update,dst_multiple"}
+# DST_UPDATE events with state context (new meaningful labels)
+{
+  "role": "DST_UPDATE",
+  "content": [{"id": "S1", "transition": "start"}],
+  "labels": "initiative|dst_update,dst_start",
+  "dst_state": {"S1": "in_progress", "S2": "not_started"}
+}
+{
+  "role": "DST_UPDATE",
+  "content": [{"id": "S1", "transition": "complete"}],
+  "labels": "initiative|dst_update,dst_complete",
+  "dst_state": {"S1": "completed", "S2": "not_started"}
+}
+{
+  "role": "DST_UPDATE",
+  "content": [{"id": "S1", "transition": "complete"}, {"id": "S2", "transition": "start"}],
+  "labels": "initiative|dst_update,dst_multiple",
+  "dst_state": {"S1": "completed", "S2": "in_progress"}
+}
 ```
 
 **Why This Matters**:

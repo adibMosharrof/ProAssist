@@ -229,16 +229,22 @@ class ConversationSplitter:
             Estimated token count for this turn
 
         Raises:
-            ValueError: If turn is missing required frame information
+            ValueError: If turn is missing required frame information (except for system prompts)
         """
-        # Check for required frame information - ALL turns should have this in DST system
+        turn_role = turn.get("role", "unknown")
+
+        # System prompts don't need frame information as they're global context
+        if turn_role == "system":
+            return self._estimate_system_prompt_length(turn)
+
+        # Check for required frame information - conversation turns should have this in DST system
         if "start_frame" not in turn or "end_frame" not in turn:
-            turn_role = turn.get("role", "unknown")
-            raise ValueError(
-                f"Turn with role '{turn_role}' is missing frame information. "
-                f"All conversation turns in DST system should have 'start_frame' and 'end_frame' keys. "
-                f"Turn content: {turn.get('content', 'N/A')[:100]}..."
+            # For conversation turns missing frame info, estimate based on content only
+            self.logger.warning(
+                f"Turn with role '{turn_role}' is missing frame information, "
+                f"estimating based on content only. Turn content: {turn.get('content', 'N/A')[:100]}..."
             )
+            return self._estimate_content_only_length(turn)
 
         # Calculate image tokens: num_frames × tokens_per_frame
         start_frame = turn["start_frame"]
@@ -281,6 +287,60 @@ class ConversationSplitter:
         )
 
         return length_estimate
+
+    def _estimate_system_prompt_length(self, turn: Dict[str, Any]) -> int:
+        """
+        Estimate token length of a system prompt (no frame information needed)
+
+        Args:
+            turn: System prompt turn
+
+        Returns:
+            Estimated token count for system prompt
+        """
+        content = turn.get("content", "")
+
+        if not content:
+            return 10  # Base overhead for system role
+
+        # Count content tokens
+        content_tokens = self._count_content_tokens(content, turn)
+
+        # Add role marker and formatting overhead (no frame tokens for system prompts)
+        total_tokens = content_tokens + 15  # Slightly higher overhead for system prompts
+
+        self.logger.debug(
+            f"System prompt: {len(content)} chars = {total_tokens} total tokens"
+        )
+
+        return total_tokens
+
+    def _estimate_content_only_length(self, turn: Dict[str, Any]) -> int:
+        """
+        Estimate token length for turns without frame information (fallback method)
+
+        Args:
+            turn: Conversation turn without frame information
+
+        Returns:
+            Estimated token count based on content only
+        """
+        content = turn.get("content", "")
+
+        if not content:
+            return 10  # Base overhead for turn without content
+
+        # Count content tokens
+        content_tokens = self._count_content_tokens(content, turn)
+
+        # Add role marker and formatting overhead (no frame tokens)
+        total_tokens = content_tokens + 15  # Slightly higher overhead for turns without frames
+
+        self.logger.debug(
+            f"Content-only turn ({turn.get('role', 'unknown')}): {len(content)} chars = {total_tokens} total tokens"
+        )
+
+        return total_tokens
 
     def _count_content_tokens(self, content, turn: Dict[str, Any]) -> int:
         """

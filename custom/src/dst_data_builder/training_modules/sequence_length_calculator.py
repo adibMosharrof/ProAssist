@@ -236,8 +236,29 @@ class SequenceLengthCalculator:
         """Count tokens using actual tokenizer if available"""
         if self.tokenizer and text:
             try:
-                tokens = self.tokenizer.encode(text, add_special_tokens=False)
-                return len(tokens)
+                # Ensure text is a string
+                if not isinstance(text, str):
+                    text = str(text)
+
+                # For SmolVLM tokenizer, try different approaches
+                try:
+                    tokens = self.tokenizer.encode(text, add_special_tokens=False)
+                    return len(tokens)
+                except Exception as encode_error:
+                    # Try without add_special_tokens parameter
+                    try:
+                        tokens = self.tokenizer.encode(text)
+                        return len(tokens)
+                    except Exception as fallback_error:
+                        # Try text input directly
+                        try:
+                            result = self.tokenizer(text, return_tensors="pt", padding=False, truncation=False)
+                            if hasattr(result, 'input_ids'):
+                                return result.input_ids.shape[1]
+                            elif isinstance(result, dict) and 'input_ids' in result:
+                                return len(result['input_ids'][0]) if result['input_ids'].dim() > 0 else len(result['input_ids'])
+                        except Exception as final_error:
+                            self.logger.warning(f"All tokenization attempts failed: encode={encode_error}, fallback={fallback_error}, final={final_error}, using approximation")
             except Exception as e:
                 self.logger.warning(f"Tokenization failed: {e}, using approximation")
 

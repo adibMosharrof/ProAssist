@@ -71,7 +71,7 @@ class DSTEventGrounding:
         role = turn.get("role", "")
 
         # Add frame information if not already present
-        if role in ["SPEAK", "DST_UPDATE"] and (
+        if role in ["system", "user", "assistant", "SPEAK", "DST_UPDATE"] and (
             "start_frame" not in updated_turn or "end_frame" not in updated_turn
         ):
             timestamp = turn.get("time", 0)
@@ -81,12 +81,10 @@ class DSTEventGrounding:
             updated_turn["start_frame"] = start_frame
             updated_turn["end_frame"] = end_frame
 
-        # Add DST context for DST_UPDATE events
-        if role == "DST_UPDATE":
-            # Compute current DST state at this point (before the transition)
-            dst_context = self._compute_dst_context_at_turn(turn, conversation)
-            if dst_context:
-                updated_turn["dst_context"] = dst_context
+        # Add current DST state to all conversation turns
+        dst_state = self._compute_dst_context_at_turn(turn, conversation)
+        if dst_state:
+            updated_turn["dst_state"] = dst_state
 
         # Generate labels based on role
         if self.enable_dst_labels:

@@ -8,11 +8,14 @@ import logging
 from tqdm import tqdm
 
 from dst_data_builder.dst_data_processor import DSTDataProcessor
-from dst_data_builder.gpt_generators.proassist_label_generator import (
-    ProAssistDSTLabelGenerator,
+from dst_data_builder.hybrid_dst.hybrid_dst_generator import (
+    HybridDSTLabelGenerator,
 )
 from dst_data_builder.validators.training_format_validator import (
     TrainingFormatValidator,
+)
+from dst_data_builder.validators.flat_timestamps_validator import (
+    FlatTimestampsValidator,
 )
 
 # Training modules
@@ -36,12 +39,20 @@ class SimpleDSTGenerator:
         self.cfg = cfg
         self.logger = logging.getLogger(__name__)
 
-        # Initialize DST generator
-        self.dst_generator = ProAssistDSTLabelGenerator(
+        # Initialize Hybrid DST generator
+        generator_cfg = getattr(cfg, "generator", {})
+        model_cfg = {
+            "name": cfg.model.name,
+            "temperature": cfg.model.temperature,
+            "max_tokens": cfg.model.max_tokens,
+        }
+        self.dst_generator = HybridDSTLabelGenerator(
             model_name=cfg.model.name,
             temperature=cfg.model.temperature,
             max_tokens=cfg.model.max_tokens,
             max_retries=cfg.max_retries,
+            generator_cfg=generator_cfg,
+            model_cfg=model_cfg,
         )
 
         # Initialize training data creation modules first
@@ -86,7 +97,10 @@ class SimpleDSTGenerator:
         }
 
         # Initialize training format validators
-        self.training_validators = [TrainingFormatValidator()]
+        self.training_validators = [
+            TrainingFormatValidator(),
+            FlatTimestampsValidator(epsilon=0.1, enable_post_processing=True)
+        ]
         self.logger.info("🔍 Training format validators initialized")
 
         self.logger.info("✅ All training modules initialized successfully")
@@ -115,14 +129,14 @@ class SimpleDSTGenerator:
         validation_stats = {"valid": 0, "invalid": 0, "errors": []}
 
         for video_data in enhanced_data:
-            # 1. Add frame information
-            video_data = self.frame_integration.add_frame_metadata(
-                video_data, dataset_name
-            )
-
-            # 2. Create training conversation structure
+            # 1. Create training conversation structure
             video_data = self.speak_dst_generator.create_training_conversation(
                 video_data
+            )
+
+            # 2. Add frame information to the training conversation
+            video_data = self.frame_integration.add_frame_metadata(
+                video_data, dataset_name
             )
 
             # 3. Track DST state throughout conversation for accurate splitting
@@ -160,7 +174,9 @@ class SimpleDSTGenerator:
 
                     # Run all validators
                     for validator in self.training_validators:
-                        validator_valid, validator_error = validator.validate(segment_data)
+                        validator_valid, validator_error = validator.validate(
+                            segment_data
+                        )
                         if not validator_valid:
                             is_valid = False
                             error_msgs.append(validator_error)
@@ -207,7 +223,8 @@ class SimpleDSTGenerator:
 
         # Get configuration
         datasets = cfg.data_source.datasets
-        splits = ["train", "val", "test"]
+        # splits = ["train", "val", "test"]
+        splits = ["test", "val", "train"]
         num_rows = cfg.data_source.num_rows
 
         self.logger.info("🚀 Starting Simple DST Generation")
@@ -254,6 +271,7 @@ class SimpleDSTGenerator:
                         split_pbar.set_description(
                             f"🔄 Processing {dataset_name}/{split}"
                         )
+                        # Process and save intermediate enhanced data (always needed for now)
                         processed, failed = self.data_processor.process_dataset_split(
                             dataset_name, split, num_rows, dataset_output_dir
                         )
@@ -263,6 +281,7 @@ class SimpleDSTGenerator:
                         self.logger.info(
                             f"Creating training format for {dataset_name}/{split}"
                         )
+
                         # Load enhanced data
                         enhanced_file = dataset_output_dir / f"{split}.json"
                         if enhanced_file.exists():
@@ -284,6 +303,15 @@ class SimpleDSTGenerator:
                             self.logger.info(
                                 f"✅ Created training format: {training_file}"
                             )
+
+                            # Clean up intermediate files if not needed
+                            save_intermediate = cfg.get("output", {}).get("save_intermediate", False)
+                            if not save_intermediate:
+                                if enhanced_file.exists():
+                                    enhanced_file.unlink()
+                                    self.logger.debug(f"🗑️ Removed intermediate file: {enhanced_file}")
+                        else:
+                            self.logger.error(f"Expected intermediate file not found: {enhanced_file}")
 
                         split_pbar.set_postfix(
                             {
