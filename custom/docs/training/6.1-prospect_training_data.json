@@ -1,0 +1,407 @@
+{
+    "video_uid": "assembly_nusar-2021_action_both_9011-c03f_9011_user_id_2021-02-01_160239__HMC_84355350_mono10bit",
+    "inferred_goal": "Assembling a Toy Roller with Chassis, Wheels, and Cabin",
+    "inferred_knowledge": "Assembling a Toy Roller with Chassis, Wheels, and Cabin\n1. Assemble the chassis by attaching and screwing the chassis parts together.\n2. Attach wheels to the chassis.\n3. Assemble the arm and attach it to the chassis.\n4. Attach the body to the chassis.\n5. Add the cabin window to the chassis.\n6. Finalize the assembly and demonstrate the toy's functionality.",
+    "video_labels": {},
+    "conversation": [
+        {
+            "role": "system",
+            "content": "You are a helpful and proactive assistant. Always be ready to assist and provide useful information ahead of time.",
+            "start_frame": 0,
+            "end_frame": 1,
+            "labels": "system|generic"
+        },
+        {
+            "role": "DST_UPDATE",
+            "content": [
+                {
+                    "id": "S1",
+                    "transition": "start"
+                }
+            ],
+            "time": 97.2,
+            "start_frame": 193,
+            "end_frame": 195,
+            "dst_state": {
+                "S1": "not_started"
+            },
+            "labels": "initiative|dst_update,dst_start,steps_1"
+        },
+        {
+            "role": "user",
+            "content": "I want to assemble a toy roller with chassis, wheels, and cabin.",
+            "time": 97.2,
+            "start_frame": 193,
+            "end_frame": 195,
+            "dst_state": {
+                "S1": "in_progress"
+            },
+            "labels": "user|generic"
+        },
+        {
+            "role": "assistant",
+            "content": "Great! Let's get started. First, we need to attach the chassis to itself. Please take the two chassis parts and connect them.",
+            "time": 97.2,
+            "labels": "assistant|generic",
+            "start_frame": 193,
+            "end_frame": 195,
+            "dst_state": {
+                "S1": "in_progress"
+            }
+        },
+        {
+            "role": "DST_UPDATE",
+            "content": [
+                {
+                    "id": "S1",
+                    "transition": "complete"
+                }
+            ],
+            "time": 106.8,
+            "start_frame": 212,
+            "end_frame": 214,
+            "dst_state": {
+                "S1": "in_progress"
+            },
+            "labels": "initiative|dst_update,dst_complete,steps_1"
+        },
+        {
+            "role": "DST_UPDATE",
+            "content": [
+                {
+                    "id": "S2",
+                    "transition": "start"
+                }
+            ],
+            "time": 106.8,
+            "start_frame": 212,
+            "end_frame": 214,
+            "dst_state": {
+                "S1": "completed",
+                "S2": "not_started"
+            },
+            "labels": "initiative|dst_update,dst_start,steps_1"
+        },
+        {
+            "role": "assistant",
+            "content": "Now, let's screw the chassis together. Take your screwdriver and screw the parts tightly. Make sure it's secure.",
+            "time": 106.8,
+            "labels": "assistant|generic",
+            "start_frame": 212,
+            "end_frame": 214,
+            "dst_state": {
+                "S1": "completed",
+                "S2": "in_progress"
+            }
+        },
+        {
+            "role": "assistant",
+            "content": "Next, attach the wheels to the chassis. Take the first wheel and attach it to the chassis. Then, screw it with the screwdriver.",
+            "time": 112.7,
+            "labels": "assistant|generic",
+            "start_frame": 224,
+            "end_frame": 226,
+            "dst_state": {
+                "S1": "completed",
+                "S2": "in_progress"
+            }
+        },
+        {
+            "role": "assistant",
+            "content": "Great job on the first wheel! Now, screw the second, third, and fourth wheels with the screwdriver, one by one.",
+            "time": 130.7,
+            "labels": "assistant|generic",
+            "start_frame": 260,
+            "end_frame": 262,
+            "dst_state": {
+                "S1": "completed",
+                "S2": "in_progress"
+            }
+        },
+        {
+            "role": "DST_UPDATE",
+            "content": [
+                {
+                    "id": "S2",
+                    "transition": "complete"
+                }
+            ],
+            "time": 152.1,
+            "start_frame": 303,
+            "end_frame": 305,
+            "dst_state": {
+                "S1": "completed",
+                "S2": "in_progress"
+            },
+            "labels": "initiative|dst_update,dst_complete,steps_1"
+        },
+        {
+            "role": "DST_UPDATE",
+            "content": [
+                {
+                    "id": "S3",
+                    "transition": "start"
+                }
+            ],
+            "time": 152.1,
+            "start_frame": 303,
+            "end_frame": 305,
+            "dst_state": {
+                "S1": "completed",
+                "S2": "completed",
+                "S3": "not_started"
+            },
+            "labels": "initiative|dst_update,dst_start,steps_1"
+        },
+        {
+            "role": "assistant",
+            "content": "Now, let's attach the roller to the arm. Take the roller and attach it to the arm. Then, attach the arm connector to the arm and the chassis.",
+            "time": 152.1,
+            "labels": "assistant|generic",
+            "start_frame": 303,
+            "end_frame": 305,
+            "dst_state": {
+                "S1": "completed",
+                "S2": "completed",
+                "S3": "in_progress"
+            }
+        },
+        {
+            "role": "DST_UPDATE",
+            "content": [
+                {
+                    "id": "S3",
+                    "transition": "complete"
+                }
+            ],
+            "time": 185.0,
+            "start_frame": 369,
+            "end_frame": 371,
+            "dst_state": {
+                "S1": "completed",
+                "S2": "completed",
+                "S3": "in_progress"
+            },
+            "labels": "initiative|dst_update,dst_complete,steps_1"
+        },
+        {
+            "role": "DST_UPDATE",
+            "content": [
+                {
+                    "id": "S4",
+                    "transition": "start"
+                }
+            ],
+            "time": 185.0,
+            "start_frame": 369,
+            "end_frame": 371,
+            "dst_state": {
+                "S1": "completed",
+                "S2": "completed",
+                "S3": "completed",
+                "S4": "not_started"
+            },
+            "labels": "initiative|dst_update,dst_start,steps_1"
+        },
+        {
+            "role": "assistant",
+            "content": "Great progress! Now, let's attach the body to the chassis. Take the rear body and screw it with your hand. Then, use the screwdriver to screw it tightly.",
+            "time": 185.0,
+            "labels": "assistant|generic",
+            "start_frame": 369,
+            "end_frame": 371,
+            "dst_state": {
+                "S1": "completed",
+                "S2": "completed",
+                "S3": "completed",
+                "S4": "in_progress"
+            }
+        },
+        {
+            "role": "DST_UPDATE",
+            "content": [
+                {
+                    "id": "S4",
+                    "transition": "complete"
+                }
+            ],
+            "time": 197.9,
+            "start_frame": 394,
+            "end_frame": 396,
+            "dst_state": {
+                "S1": "completed",
+                "S2": "completed",
+                "S3": "completed",
+                "S4": "in_progress"
+            },
+            "labels": "initiative|dst_update,dst_complete,steps_1"
+        },
+        {
+            "role": "DST_UPDATE",
+            "content": [
+                {
+                    "id": "S5",
+                    "transition": "start"
+                }
+            ],
+            "time": 197.9,
+            "start_frame": 394,
+            "end_frame": 396,
+            "dst_state": {
+                "S1": "completed",
+                "S2": "completed",
+                "S3": "completed",
+                "S4": "completed",
+                "S5": "not_started"
+            },
+            "labels": "initiative|dst_update,dst_start,steps_1"
+        },
+        {
+            "role": "assistant",
+            "content": "Now, let's attach the cabin window to the cabin and then to the chassis. Take the cabin window and secure it to both parts using your screwdriver.",
+            "time": 197.9,
+            "labels": "assistant|generic",
+            "start_frame": 394,
+            "end_frame": 396,
+            "dst_state": {
+                "S1": "completed",
+                "S2": "completed",
+                "S3": "completed",
+                "S4": "completed",
+                "S5": "in_progress"
+            }
+        },
+        {
+            "role": "DST_UPDATE",
+            "content": [
+                {
+                    "id": "S5",
+                    "transition": "complete"
+                }
+            ],
+            "time": 212.3,
+            "start_frame": 423,
+            "end_frame": 425,
+            "dst_state": {
+                "S1": "completed",
+                "S2": "completed",
+                "S3": "completed",
+                "S4": "completed",
+                "S5": "in_progress"
+            },
+            "labels": "initiative|dst_update,dst_complete,steps_1"
+        },
+        {
+            "role": "DST_UPDATE",
+            "content": [
+                {
+                    "id": "S6",
+                    "transition": "start"
+                }
+            ],
+            "time": 212.3,
+            "start_frame": 423,
+            "end_frame": 425,
+            "dst_state": {
+                "S1": "completed",
+                "S2": "completed",
+                "S3": "completed",
+                "S4": "completed",
+                "S5": "completed",
+                "S6": "not_started"
+            },
+            "labels": "initiative|dst_update,dst_start,steps_1"
+        },
+        {
+            "role": "assistant",
+            "content": "Almost done! Now, let's test the toy roller to make sure everything is working as expected. Give it a try and see how it rolls!",
+            "time": 212.3,
+            "labels": "assistant|generic",
+            "start_frame": 423,
+            "end_frame": 425,
+            "dst_state": {
+                "S1": "completed",
+                "S2": "completed",
+                "S3": "completed",
+                "S4": "completed",
+                "S5": "completed",
+                "S6": "in_progress"
+            }
+        },
+        {
+            "role": "DST_UPDATE",
+            "content": [
+                {
+                    "id": "S6",
+                    "transition": "complete"
+                }
+            ],
+            "time": 225.2,
+            "start_frame": 449,
+            "end_frame": 451,
+            "dst_state": {
+                "S1": "completed",
+                "S2": "completed",
+                "S3": "completed",
+                "S4": "completed",
+                "S5": "completed",
+                "S6": "in_progress"
+            },
+            "labels": "initiative|dst_update,dst_complete,steps_1"
+        }
+    ],
+    "dst": [
+        {
+            "type": "step",
+            "id": "S1",
+            "start_ts": 97.2,
+            "end_ts": 106.8,
+            "name": "Assemble the chassis by attaching and screwing the chassis parts together."
+        },
+        {
+            "type": "step",
+            "id": "S2",
+            "start_ts": 106.8,
+            "end_ts": 152.1,
+            "name": "Attach wheels to the chassis."
+        },
+        {
+            "type": "step",
+            "id": "S3",
+            "start_ts": 152.1,
+            "end_ts": 185.0,
+            "name": "Assemble the arm and attach it to the chassis."
+        },
+        {
+            "type": "step",
+            "id": "S4",
+            "start_ts": 185.0,
+            "end_ts": 197.9,
+            "name": "Attach the body to the chassis."
+        },
+        {
+            "type": "step",
+            "id": "S5",
+            "start_ts": 197.9,
+            "end_ts": 212.3,
+            "name": "Add the cabin window to the chassis."
+        },
+        {
+            "type": "step",
+            "id": "S6",
+            "start_ts": 212.3,
+            "end_ts": 225.2,
+            "name": "Finalize the assembly and demonstrate the toy's functionality."
+        }
+    ],
+    "frames_file": "data/assembly101/frames/assembly_nusar-2021_action_both_9011-c03f_9011_user_id_2021-02-01_160239__HMC_84355350_mono10bit.arrow",
+    "start_frame_idx": 193,
+    "end_frame_idx": 451,
+    "seq_len": 818,
+    "dataset": "assembly101",
+    "clip_idx": 0,
+    "max_seq_len": 4096,
+    "num_tokens_per_img": 1,
+    "fps": 2,
+    "quality": 3.5
+}

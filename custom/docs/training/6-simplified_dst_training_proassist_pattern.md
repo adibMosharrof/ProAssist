@@ -108,38 +108,10 @@ We replace progress summaries with **DST state information** embedded directly i
 ## Simplified DST Training Implementation
 
 ### **Enhanced Conversation Format**
-```json
-{
-  "conversation": [
-    {
-      "role": "assistant",
-      "content": "Let's start by attaching the chassis",
-      "dst_context": {"S1": "not_started", "S2": "not_started"},
-      "start_frame": 0,
-      "end_frame": 5
-    },
-    {
-      "role": "DST_UPDATE",
-      "time": 97.2,
-      "content": [{"id": "S1", "transition": "start"}],
-      "dst_context": {"S1": "not_started", "S2": "not_started"},
-      "start_frame": 97,
-      "end_frame": 98
-    },
-    {
-      "role": "assistant",
-      "content": "Great! Now attach the wheel to the chassis",
-      "dst_context": {"S1": "in_progress", "S2": "not_started"},
-      "start_frame": 97,
-      "end_frame": 118
-    }
-  ],
-  "dst": [
-    {"id": "S1", "name": "Attach chassis", "start_ts": 97.2, "end_ts": 118.7},
-    {"id": "S2", "name": "Attach wheel", "start_ts": 130.7, "end_ts": 152.1}
-  ]
-}
-```
+
+custom/docs/training/6.1-prospect_training_data.json
+
+the above json file contains a sample data point.
 
 **Note**: Frame information is embedded directly in each conversation turn. DST context is included in both assistant turns (for state awareness) and DST_UPDATE events (showing state at transition time). Roles use DSTRole enum values. For token efficiency, string values get converted to integers during model training (assistant=1, DST_UPDATE=3, etc.).
 
