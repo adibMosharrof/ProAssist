@@ -88,8 +88,8 @@ class BidirectionalSpanConstructor(BaseSpanConstructor):
         total_blocks = len(filtered_blocks)
         total_steps = len(inferred_knowledge)
 
-        self.logger.info("🔄 Starting bidirectional span construction")
-        self.logger.info(f"📊 Processing {total_blocks} blocks for {total_steps} steps")
+        self.logger.debug("🔄 Starting bidirectional span construction")
+        self.logger.debug(f"📊 Processing {total_blocks} blocks for {total_steps} steps")
 
         # Phase 1: Forward Pass
         forward_result = self._execute_forward_pass(filtered_blocks, inferred_knowledge)
@@ -129,9 +129,6 @@ class BidirectionalSpanConstructor(BaseSpanConstructor):
             dst_spans,
         )
 
-        self.logger.info(
-            f"✅ Bidirectional construction complete: {len(dst_spans)} final DST spans"
-        )
 
         return BidirectionalSpanConstructionResult(
             dst_spans=dst_spans,
@@ -308,6 +305,9 @@ class BidirectionalSpanConstructor(BaseSpanConstructor):
             best_idx = np.argmax(block_result.combined_scores)
             # Use the actual combined score as confidence
             best_confidence = float(block_result.combined_scores[best_idx])
+        else:
+            # No blocks classified (empty result) - return first possible step with low confidence
+            return possible_steps[0][0], 0.0
 
         best_step_idx = possible_steps[best_idx][0]
 
@@ -360,7 +360,7 @@ class BidirectionalSpanConstructor(BaseSpanConstructor):
             if step_conflict or confidence_conflict:
                 conflicts.append(block_idx)
 
-        self.logger.info(
+        self.logger.debug(
             f"⚠️ Detected {len(conflicts)} conflicts in middle blocks: {conflicts}"
         )
         return conflicts
@@ -389,7 +389,7 @@ class BidirectionalSpanConstructor(BaseSpanConstructor):
                 # Use forward assignment for anchored blocks (both should be the same)
                 assignment = forward_result.block_assignments[block_idx].copy()
                 resolved_assignments[block_idx] = assignment
-                self.logger.info(
+                self.logger.debug(
                     f"✅ Included anchored assignment for block {block_idx}: step {assignment['step_index']}, source={assignment['source']}, confidence={assignment['confidence']}"
                 )
 
@@ -493,7 +493,7 @@ class BidirectionalSpanConstructor(BaseSpanConstructor):
                             "source"
                         ] = "llm_fallback_backward"
 
-            self.logger.info(
+            self.logger.debug(
                 "🤖 LLM resolved %d conflicts: %d successful, %d fallback",
                 len(conflicts),
                 llm_result.success_count,

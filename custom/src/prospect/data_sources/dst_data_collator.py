@@ -1,372 +1,269 @@
-"""DST Data Collator with multimodal frame processing.
+"""DST Data Collator following ProAssist patterns.
 
-This collator processes DST training samples with conversation + video frames + DST data
-in a multimodal training setup.
+This collator processes DST training samples with conversation + video frames + DST data.
+It follows the same label generation approach as ProAssist's ProActCollator.
 """
 
 import logging
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 import torch
 
 logger = logging.getLogger(__name__)
 
 
 class DSTDataCollator:
-    """Data collator for multimodal DST training with video frames."""
+    """Data collator for DST training with temporal frame interleaving.
+    
+    Architecture:
+    - Formats conversations with temporal interleaving: [system] [turn1_frames][turn1_text] [turn2_frames][turn2_text]...
+    - Uses precomputed vision embeddings (no vision encoder during training)
+    - Multi-task training: 4 losses (speaking_gen, speaking_binary, dst_gen, dst_binary)
+    - Supports assistant turns and DST_UPDATE turns as learnable objectives
+    
+    Negative Frame Sampling Strategy:
+    - neg_frame_sampling_rate controls training on non-assistant frames
+    - Assistant/DST_UPDATE turns: ALWAYS learn all frames + text (sampling_rate=1.0)
+    - User/System turns: Sample frames with probability neg_frame_sampling_rate
+      - e.g., if sampling_rate=0.5, randomly sample ~50% of user frames during training
+      - if sampling_rate=1.0, learn from all frames (validation set behavior)
+    
+    Implementation:
+    - Frame sampling is handled in DSTMultimodalChat.get_learn_ranges_separated()
+    - Returns separate ranges for assistant and DST_UPDATE turns
+    - Ranges are then converted to label positions by the collator
+    """
 
     def __init__(
         self,
-        max_seq_len: int = 4096,
-        num_dst_states: int = 3,
-        frame_size: Tuple[int, int] = (224, 224),
-        normalize_frames: bool = True,
         tokenizer=None,
+        chat_formatter=None,
+        max_seq_len: int = 4096,
+        compute_labels: bool = True,
     ):
-        self.max_seq_len = max_seq_len
-        self.num_dst_states = num_dst_states
-        self.frame_size = frame_size
-        self.normalize_frames = normalize_frames
         self.tokenizer = tokenizer
+        self.chat_formatter = chat_formatter
+        self.max_seq_len = max_seq_len
+        self.compute_labels = compute_labels
 
-        logger.info("Initialized DSTDataCollator with stateless multimodal processing")
 
     def __call__(self, samples: list[dict]) -> dict[str, torch.Tensor]:
-        """Process a batch of multimodal DST training samples."""
-        return self._process_multimodal_batch(samples)
-
-    def _process_multimodal_batch(self, samples: list[dict]) -> dict[str, torch.Tensor]:
-        """Process multimodal batch with conversation + frames + DST data."""
+        """Process a batch of DST training samples with temporal frame interleaving.
+        
+        Input format: Conversations are formatted with frames preceding text:
+        [TURN 1 FRAMES] <image><image>... [TURN 1 TEXT]
+        [TURN 2 FRAMES] <image><image>... [TURN 2 TEXT]
+        
+        This creates natural temporal flow where vision and text are aligned by turn.
+        """
+        if not self.chat_formatter:
+            raise ValueError("chat_formatter is required for text formatting and range calculation")
+        
+        # Format conversations and get learn ranges in single pass from chat_formatter
+        texts = []
+        batch_learn_ranges_speaking = []  # For assistant turns
+        batch_learn_ranges_dst = []  # For DST_UPDATE turns
+        batch_learn_ranges_negative = []  # For negative sampled frames
+        batch_embeddings_by_turn = []  # Track which embeddings belong to which turn
+        
+        for sample_idx, sample in enumerate(samples):
+            conv = sample["conversation"]
+            nfsr = sample.get("neg_frame_sampling_rate", 1.0)
+            clip_start_frame = sample.get("start_frame_idx", 0)
+            clip_embeddings = sample.get("embeddings")  # [num_frames_in_clip, 2048]
+            
+            # Single source of truth: chat_formatter builds text AND ranges together
+            text, speaking_ranges, dst_ranges, negative_ranges = self.chat_formatter.format_conversation_with_ranges(
+                conv, nfsr
+            )
+            
+            # Build turn-specific embedding selections
+            turn_embeddings_list = self._extract_turn_embeddings(conv, clip_start_frame, clip_embeddings)
+            
+            texts.append(text)
+            batch_learn_ranges_speaking.append(speaking_ranges)
+            batch_learn_ranges_dst.append(dst_ranges)
+            batch_learn_ranges_negative.append(negative_ranges)
+            batch_embeddings_by_turn.append(turn_embeddings_list)
+        
+        # Tokenize with offset mapping
+        batch = self.tokenizer(
+            texts,
+            return_offsets_mapping=True,
+            add_special_tokens=False,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=self.max_seq_len,
+        )
+        
+        batch["sample_idx"] = torch.tensor([s["sample_idx"] for s in samples])
+        
+        # Handle precomputed embeddings: flatten frames in turn order
         batch_size = len(samples)
-
-        # Extract basic mmassist fields
-        video_uids = [s["video_uid"] for s in samples]
-        conversations = [s["conversation"] for s in samples]
-        sample_indices = [s["sample_idx"] for s in samples]
-
-        # Extract multimodal data
-        frame_lists = [s.get("frames", []) for s in samples]
-        frame_metadata = [s.get("frame_metadata", {}) for s in samples]
-        dst_data_list = [s.get("dst", []) for s in samples]
-        dst_labels_list = [s.get("dst_labels", {}) for s in samples]
-        speaking_labels_list = [s.get("speaking_labels", {}) for s in samples]
-
-        # Process conversation tokens with real tokenization
-        input_ids, attention_mask, labels = self._process_conversations(
-            conversations, batch_size, self.tokenizer
-        )
-
-        # Process video frames
-        frame_tensors = self._process_video_frames(frame_lists, batch_size)
-
-        # Prepare DST tensors
-        dst_tensors = self._prepare_dst_tensors(dst_labels_list, dst_data_list)
-
-        # Prepare speaking labels
-        speaking_tensors = self._prepare_speaking_tensors(speaking_labels_list)
-
-        # Prepare frame metadata
-        frame_meta_tensors = self._prepare_frame_metadata(frame_metadata, batch_size)
-
-        batch = {
-            # Basic mmassist tensors
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "labels": labels,
-            # Multimodal video frame data
-            "video_frames": frame_tensors,
-            "frame_mask": frame_meta_tensors["frame_mask"],
-            "frame_count": frame_meta_tensors["frame_count"],
-            # mmassist metadata
-            "sample_idx": torch.tensor(sample_indices, dtype=torch.long),
-            "video_uid": video_uids,
-            "conversation": conversations,  # Keep raw conversations for processing
-            # DST-specific tensors
-            "dst_update_labels": dst_tensors["dst_update_labels"],
-            "dst_state_labels": dst_tensors["dst_state_labels"],
-            "temporal_dst_update_labels": dst_tensors["temporal_dst_update_labels"],  # NEW: For BCE loss
-            "event_dst_targets": dst_tensors["event_dst_targets"],  # NEW: Ground truth transitions
-            "temporal_speaking_labels": speaking_tensors["temporal_speaking_labels"],  # For BCE loss
-            "event_speaking_targets": speaking_tensors["event_speaking_targets"],  # Ground truth text + metadata
-            "max_events": speaking_tensors["max_events"],
-            # Combined metadata
-            "user_types": [s.get("user_type", "unknown") for s in samples],
-            "frame_sampling_strategy": [
-                meta.get("frame_sampling_strategy", "uniform")
-                for meta in frame_metadata
-            ],
-            "num_dst_steps": dst_tensors["num_steps"],
-            "video_duration": dst_tensors["video_duration"],
-            "fps": [meta.get("fps", 2) for meta in frame_metadata],
-        }
-
+        embedding_dim = 2048
+        
+        # Flatten all turn embeddings across all samples and turns
+        all_embeddings = []
+        for sample_idx in range(batch_size):
+            for turn_emb in batch_embeddings_by_turn[sample_idx]:
+                if turn_emb.shape[0] > 0:  # Only add non-empty embeddings
+                    all_embeddings.append(turn_emb)
+        
+        if all_embeddings:
+            # Stack all embeddings: [total_frames_across_all_turns, 2048]
+            image_embeds_flattened = torch.cat(all_embeddings, dim=0)
+            batch["image_embeds"] = image_embeds_flattened.float()
+        else:
+            # No embeddings, create empty tensor
+            batch["image_embeds"] = torch.zeros(0, embedding_dim, dtype=torch.float32)
+        
+        if not self.compute_labels:
+            batch.pop("offset_mapping")
+            return batch
+        
+        # Create labels for multi-task training
+        # Important: Only create labels for assistant and DST_UPDATE turns
+        # Image tokens and user/system text should NOT have labels
+        ignore_id = getattr(self.tokenizer, 'ignore_id', -100)
+        image_token_id = getattr(self.tokenizer, 'image_token_id', None)
+        
+        speaking_gen_labels = torch.full_like(batch.input_ids, ignore_id, dtype=torch.long)
+        dst_gen_labels = torch.full_like(batch.input_ids, ignore_id, dtype=torch.long)
+        speaking_labels = torch.full_like(batch.input_ids, -100, dtype=torch.long)
+        dst_update_labels = torch.full_like(batch.input_ids, -100, dtype=torch.long)
+        
+        # Map character ranges to token positions for learnable turns only
+        for idx, (input_ids, offset_mapping, speaking_ranges, dst_ranges, negative_ranges) in enumerate(zip(
+            batch.input_ids,
+            batch.offset_mapping,
+            batch_learn_ranges_speaking,
+            batch_learn_ranges_dst,
+            batch_learn_ranges_negative,
+        )):
+            # Process speaking (assistant) ranges - ONLY these should have labels
+            for learn_r in speaking_ranges:
+                start_token, stop_token = self._char_range_to_token_range(
+                    learn_r, offset_mapping, input_ids
+                )
+                if start_token is not None and stop_token is not None and stop_token > start_token:
+                    # Create label assignment: shift by 1 for LM loss, but skip image tokens
+                    for token_pos in range(start_token, stop_token):
+                        # Skip image tokens
+                        if image_token_id is None or input_ids[token_pos] != image_token_id:
+                            # Set LM label (shifted by 1): predict next token
+                            if token_pos > 0:
+                                speaking_gen_labels[idx, token_pos - 1] = input_ids[token_pos]
+                            # Set binary speaking label
+                            speaking_labels[idx, token_pos] = 1
+            
+            # Process DST_UPDATE ranges - ONLY these should have labels
+            for learn_r in dst_ranges:
+                start_token, stop_token = self._char_range_to_token_range(
+                    learn_r, offset_mapping, input_ids
+                )
+                if start_token is not None and stop_token is not None and stop_token > start_token:
+                    # Create label assignment: shift by 1 for LM loss, but skip image tokens
+                    for token_pos in range(start_token, stop_token):
+                        # Skip image tokens
+                        if image_token_id is None or input_ids[token_pos] != image_token_id:
+                            # Set LM label (shifted by 1): predict next token
+                            if token_pos > 0:
+                                dst_gen_labels[idx, token_pos - 1] = input_ids[token_pos]
+                            # Set binary DST update label
+                            dst_update_labels[idx, token_pos] = 1
+            
+            # Process negative ranges - set binary labels to 0 (no speaking, no DST update)
+            for learn_r in negative_ranges:
+                start_token, stop_token = self._char_range_to_token_range(
+                    learn_r, offset_mapping, input_ids
+                )
+                if start_token is not None and stop_token is not None and stop_token > start_token:
+                    for token_pos in range(start_token, stop_token):
+                        # Skip image tokens
+                        if image_token_id is None or input_ids[token_pos] != image_token_id:
+                            # Set binary labels to 0 (negative samples)
+                            speaking_labels[idx, token_pos] = 0
+                            dst_update_labels[idx, token_pos] = 0
+        
+        batch["labels"] = speaking_gen_labels
+        batch["speaking_labels"] = speaking_labels
+        batch["dst_gen_labels"] = dst_gen_labels
+        batch["dst_update_labels"] = dst_update_labels
+        batch.pop("offset_mapping")
+        
         return batch
+    
+    def _char_range_to_token_range(
+        self, char_range: range, offset_mapping: torch.Tensor, input_ids: torch.Tensor
+    ) -> Tuple[int, int]:
+        """Convert character range to token range using offset mapping.
+        
+        Follows ProAssist's approach for mapping char positions to token positions.
+        """
+        last_start = offset_mapping[-1, 0].item()
+        
+        if char_range.start > last_start:
+            # Range is beyond the tokenized text (truncated)
+            return None, None
+        
+        # Find start token
+        start_matches = torch.nonzero(offset_mapping[:, 0] == char_range.start)
+        if len(start_matches) == 0:
+            # Try finding closest match
+            start_matches = torch.nonzero(offset_mapping[:, 0] >= char_range.start)
+            if len(start_matches) == 0:
+                return None, None
+        start_token = start_matches[0].item()
+        
+        # Find stop token
+        if offset_mapping[:, 0][-1].item() >= char_range.stop:
+            stop_matches = torch.nonzero(offset_mapping[:, 0] >= char_range.stop)
+            if len(stop_matches) == 0:
+                stop_token = len(input_ids)
+            else:
+                stop_token = stop_matches[0].item()
+        else:
+            # The range extends to the end
+            stop_token = len(input_ids)
+        
+        return start_token, stop_token
 
-    def _process_conversations(
-        self, conversations: List[List[Dict]], batch_size: int, tokenizer
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Process conversations into input tensors with REAL tokenization."""
-
-        if tokenizer is None:
-            # Fallback to fake tokenization if no tokenizer provided
-            input_ids = torch.randint(
-                1000, 30000, (batch_size, self.max_seq_len), dtype=torch.long
-            )
-            attention_mask = torch.ones(batch_size, self.max_seq_len, dtype=torch.long)
-            labels = torch.roll(input_ids, shifts=-1, dims=1)
-            labels[:, -1] = -100  # Padding token for labels
-            return input_ids, attention_mask, labels
-
-        # REAL tokenization of conversations
-        input_ids_batch = []
-        attention_mask_batch = []
-
-        for conversation in conversations:
-            # Convert conversation to text
-            conversation_text = ""
-            for turn in conversation:
-                # Handle both enhanced format (type) and legacy format (role)
-                event_type = turn.get("type", turn.get("role", ""))
-                content = turn.get("content", "")
+    def _extract_turn_embeddings(
+        self, conv: list, clip_start_frame: int, clip_embeddings: torch.Tensor
+    ) -> List[torch.Tensor]:
+        """Extract embeddings for each turn based on frame indices.
+        
+        Args:
+            conv: List of conversation turns with start_frame/end_frame
+            clip_start_frame: Starting frame index of this clip
+            clip_embeddings: Precomputed embeddings [num_frames, 2048]
+            
+        Returns:
+            List of embedding tensors, one per turn (empty tensor for turns without frames)
+        """
+        turn_embeddings_list = []
+        
+        for turn in conv:
+            if "start_frame" in turn and "end_frame" in turn:
+                # Convert video frame indices to pickle array indices
+                turn_start_video = turn["start_frame"]
+                turn_end_video = turn["end_frame"]
+                turn_start_pickle = turn_start_video - clip_start_frame
+                turn_end_pickle = turn_end_video - clip_start_frame
                 
-                if content:
-                    if event_type == "SPEAK":
-                        conversation_text += f"Assistant: {content}\n"
-                    elif event_type == "DST_UPDATE":
-                        # Include DST transition information
-                        transitions = turn.get("content", [])
-                        if isinstance(transitions, list):
-                            trans_text = ", ".join([f"{t.get('id', '?')}:{t.get('transition', '?')}" for t in transitions])
-                            conversation_text += f"DST Update: {trans_text}\n"
-                        else:
-                            conversation_text += f"DST Update: {transitions}\n"
-                    elif event_type:
-                        conversation_text += f"{event_type}: {content}\n"
-                    else:
-                        conversation_text += f"{content}\n"
-
-            # Tokenize the conversation text
-            encoded = tokenizer(
-                conversation_text,
-                truncation=True,
-                padding="max_length",
-                max_length=self.max_seq_len,
-                return_tensors="pt",
-            )
-
-            input_ids_batch.append(encoded["input_ids"].squeeze(0))
-            attention_mask_batch.append(encoded["attention_mask"].squeeze(0))
-
-        # Stack into batch tensors
-        input_ids = torch.stack(input_ids_batch)
-        attention_mask = torch.stack(attention_mask_batch)
-
-        # Create labels (shifted for language modeling)
-        labels = input_ids.clone()
-        # For language modeling, we shift everything by 1 position
-        labels[:, :-1] = input_ids[:, 1:]
-        labels[:, -1] = -100  # Padding token for labels
-
-        return input_ids, attention_mask, labels
-
-    def _process_video_frames(
-        self, frame_lists: List[List[torch.Tensor]], batch_size: int
-    ) -> torch.Tensor:
-        """Process video frame lists into padded tensors."""
-        # if not frame_lists or not any(frame_lists):
-        #     # Return empty frames
-        #     return torch.zeros(batch_size, 0, 3, *self.frame_size, dtype=torch.float32)
-
-        # Find max number of frames in batch
-        max_frames = max(len(frames) for frames in frame_lists) if frame_lists else 0
-        if max_frames == 0:
-            return torch.zeros(batch_size, 0, 3, *self.frame_size, dtype=torch.float32)
-
-        # Prepare padded frame tensor (batch_size, max_frames, channels, height, width)
-        frame_tensor = torch.zeros(
-            batch_size, max_frames, 3, *self.frame_size, dtype=torch.float32
-        )
-
-        for batch_idx, frames in enumerate(frame_lists):
-            for frame_idx, frame in enumerate(frames):
-                if frame_idx < max_frames:
-                    # Resize frame to target size and normalize if needed
-                    processed_frame = self._resize_and_normalize_frame(frame)
-                    # Ensure we have the right number of channels
-                    if processed_frame.dim() == 3:
-                        frame_tensor[batch_idx, frame_idx] = processed_frame
-                    elif processed_frame.dim() == 2:
-                        # Grayscale to RGB
-                        frame_tensor[batch_idx, frame_idx, 0] = processed_frame
-                        frame_tensor[batch_idx, frame_idx, 1] = processed_frame
-                        frame_tensor[batch_idx, frame_idx, 2] = processed_frame
-
-        return frame_tensor
-
-    def _resize_and_normalize_frame(self, frame: torch.Tensor) -> torch.Tensor:
-        """Resize frame to target size and normalize if needed."""
-        # Handle different input formats
-        if frame.dim() == 2:
-            # Grayscale, expand to RGB
-            frame = frame.unsqueeze(0).repeat(3, 1, 1)
-        elif frame.dim() == 3:
-            # (H, W, C) -> (C, H, W)
-            frame = frame.permute(2, 0, 1)
-        elif frame.dim() == 4:
-            # Remove batch dimension if present
-            frame = frame.squeeze(0)
-
-        # Resize to target size
-        from torchvision.transforms.functional import resize
-
-        frame = resize(frame, self.frame_size)
-
-        # Normalize frames if needed
-        if self.normalize_frames:
-            # Normalize to [0, 1] range
-            frame = frame.float() / 255.0 if frame.max() > 1.0 else frame.float()
-
-        return frame
-
-    def _prepare_dst_tensors(
-        self, dst_labels_list: List[Dict], dst_data_list: List[List]
-    ) -> Dict[str, torch.Tensor]:
-        """Prepare DST-specific tensors for training with temporal structure."""
-        batch_size = len(dst_labels_list)
-        max_steps = (
-            max(len(labels.get("step_ids", [])) for labels in dst_labels_list)
-            if dst_labels_list
-            else 0
-        )
-
-        if max_steps == 0:
-            return {
-                "dst_update_labels": torch.zeros((batch_size, 1), dtype=torch.long),
-                "dst_state_labels": torch.zeros((batch_size, 1), dtype=torch.long),
-                "temporal_dst_update_labels": torch.zeros((batch_size, 1), dtype=torch.long),  # NEW
-                "event_dst_targets": [],  # NEW
-                "num_steps": torch.zeros((batch_size,), dtype=torch.long),
-                "video_duration": torch.zeros((batch_size,), dtype=torch.float),
-            }
-
-        # Prepare padded tensors
-        dst_update_labels = torch.zeros((batch_size, max_steps), dtype=torch.long)
-        dst_state_labels = torch.zeros((batch_size, max_steps), dtype=torch.long)
+                # Extract turn-specific embeddings (inclusive range)
+                if turn_start_pickle >= 0 and turn_end_pickle < clip_embeddings.shape[0]:
+                    turn_emb = clip_embeddings[turn_start_pickle:turn_end_pickle + 1]
+                    turn_embeddings_list.append(turn_emb)
+                else:
+                    # Frame indices out of bounds
+                    turn_embeddings_list.append(
+                        torch.tensor([], dtype=clip_embeddings.dtype).reshape(0, clip_embeddings.shape[-1])
+                    )
+            else:
+                # Turn without frames (system message, etc.)
+                turn_embeddings_list.append(
+                    torch.tensor([], dtype=clip_embeddings.dtype).reshape(0, clip_embeddings.shape[-1])
+                )
         
-        # NEW: Temporal DST update labels (similar to temporal speaking labels)
-        temporal_dst_update_labels = []
-        event_dst_targets = []
-        max_events = 0
-        
-        num_steps = torch.zeros((batch_size,), dtype=torch.long)
-        video_duration = torch.zeros((batch_size,), dtype=torch.float)
-
-        for i, (dst_labels, dst_data) in enumerate(zip(dst_labels_list, dst_data_list)):
-            # Get DST labels
-            updates = dst_labels.get("dst_update_labels", [])
-            states = dst_labels.get("dst_state_labels", [])
-
-            # Pad to max_steps
-            padded_updates = updates + [0] * (max_steps - len(updates))
-            padded_states = states + [1] * (max_steps - len(states))
-
-            dst_update_labels[i, :] = torch.tensor(
-                padded_updates[:max_steps], dtype=torch.long
-            )
-            dst_state_labels[i, :] = torch.tensor(
-                padded_states[:max_steps], dtype=torch.long
-            )
-
-            # NEW: Handle temporal DST labels
-            temporal_labels = dst_labels.get("temporal_dst_update_labels", [])
-            temporal_dst_update_labels.append(temporal_labels)
-            max_events = max(max_events, len(temporal_labels))
-            
-            event_targets = dst_labels.get("event_dst_targets", [])
-            event_dst_targets.append(event_targets)
-
-            num_steps[i] = len(dst_data)
-            video_duration[i] = dst_labels.get("video_duration", 0.0)
-        
-        # Pad temporal DST update labels
-        padded_temporal_dst_labels = torch.zeros(
-            (batch_size, max_events), dtype=torch.long
-        )
-        
-        for i, labels in enumerate(temporal_dst_update_labels):
-            padded_labels = labels + [0] * (max_events - len(labels))
-            padded_temporal_dst_labels[i, :] = torch.tensor(padded_labels[:max_events], dtype=torch.long)
-
-        return {
-            "dst_update_labels": dst_update_labels,
-            "dst_state_labels": dst_state_labels,
-            "temporal_dst_update_labels": padded_temporal_dst_labels,  # NEW: For BCE loss
-            "event_dst_targets": event_dst_targets,  # NEW: Ground truth transitions
-            "num_steps": num_steps,
-            "video_duration": video_duration,
-        }
-
-    def _prepare_speaking_tensors(
-        self, speaking_labels_list: List[Dict]
-    ) -> Dict[str, torch.Tensor]:
-        """Prepare speaking labels as tensors for multi-task training."""
-        
-        # Temporal speaking labels for BCE loss
-        temporal_speaking_labels = []
-        
-        # Event-level speaking targets for ground truth text comparison
-        event_speaking_targets = []
-        
-        max_events = 0
-        
-        for speaking_labels in speaking_labels_list:
-            # Temporal speaking decisions (1=speak, 0=silent)
-            temporal_labels = speaking_labels.get("temporal_speaking_labels", [])
-            temporal_speaking_labels.append(temporal_labels)
-            
-            # Ground truth text and metadata for evaluation
-            event_targets = speaking_labels.get("event_speaking_targets", [])
-            event_speaking_targets.append(event_targets)
-            
-            max_events = max(max_events, len(temporal_labels))
-        
-        # Pad temporal speaking labels for batching
-        padded_temporal_labels = torch.zeros(
-            (len(speaking_labels_list), max_events), dtype=torch.long
-        )
-        
-        for i, labels in enumerate(temporal_speaking_labels):
-            padded_labels = labels + [0] * (max_events - len(labels))
-            padded_temporal_labels[i, :] = torch.tensor(padded_labels[:max_events], dtype=torch.long)
-        
-        return {
-            "temporal_speaking_labels": padded_temporal_labels,  # For BCE loss
-            "event_speaking_targets": event_speaking_targets,    # Ground truth text + metadata
-            "max_events": max_events,
-        }
-
-    def _prepare_frame_metadata(
-        self, frame_metadata: List[Dict], batch_size: int
-    ) -> Dict[str, torch.Tensor]:
-        """Prepare frame metadata as tensors."""
-        frame_counts = []
-        frame_masks = []
-
-        max_frames = 0
-        for meta in frame_metadata:
-            frame_counts.append(meta.get("frame_count", 0))
-            max_frames = max(max_frames, meta.get("frame_count", 0))
-
-        # Create frame masks (1 for real frames, 0 for padding)
-        for i, count in enumerate(frame_counts):
-            mask = torch.zeros(max_frames, dtype=torch.long)
-            mask[:count] = 1
-            frame_masks.append(mask)
-
-        return {
-            "frame_count": torch.tensor(frame_counts, dtype=torch.long),
-            "frame_mask": (
-                torch.stack(frame_masks)
-                if frame_masks
-                else torch.zeros((batch_size, 0), dtype=torch.long)
-            ),
-        }
+        return turn_embeddings_list

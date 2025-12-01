@@ -18,6 +18,10 @@ from dst_data_builder.hybrid_dst.span_constructors.bidirectional_span_constructo
     BidirectionalSpanConstructionResult,
     DirectionalAssignment,
 )
+from dst_data_builder.hybrid_dst.span_constructors.llm_span_constructor import (
+    LLMSpanConstructor,
+    LLMSpanConstructionResult,
+)
 from dst_data_builder.hybrid_dst.span_constructors.global_similarity_calculator import (
     GlobalSimilarityCalculator,
     ClassificationResult,
@@ -37,6 +41,8 @@ __all__ = [
     "BidirectionalSpanConstructor",
     "BidirectionalSpanConstructionResult",
     "DirectionalAssignment",
+    "LLMSpanConstructor",
+    "LLMSpanConstructionResult",
     "GlobalSimilarityCalculator",
     "ClassificationResult",
     "SimilarityResult",

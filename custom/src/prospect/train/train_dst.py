@@ -269,10 +269,11 @@ class DSTTrainer:
         """Setup model and processor from configuration"""
         self.logger.info(f"Loading model: {self.cfg.model.name}")
 
-        # Load processor
+        # Load processor with N=1 config to reduce token count
         self.processor = AutoProcessor.from_pretrained(
             self.cfg.model.name,
             trust_remote_code=True,
+            size={"longest_edge": 384}  # Force N=1 configuration (1 patch → 81 tokens per image)
         )
 
         # Create model config
@@ -394,15 +395,11 @@ class DSTTrainer:
     def create_data_collators(self):
         """Create data collators for training and evaluation"""
         train_collator = DSTDataCollator(
-            processor=self.processor,
             max_seq_len=self.cfg.data.max_seq_len,
-            pad_to_multiple_of=8,
         )
 
         eval_collator = DSTDataCollator(
-            processor=self.processor,
             max_seq_len=self.cfg.data.max_seq_len,
-            pad_to_multiple_of=None,
         )
 
         return train_collator, eval_collator

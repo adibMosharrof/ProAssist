@@ -64,10 +64,6 @@ class OverlapAwareBlockReducer:
             self.logger.warning("No step descriptions provided for block reduction")
             return BlockReductionResult([], 0, 0, 0)
 
-        self.logger.info(
-            "Starting simple block reduction for %d blocks",
-            len(all_step_descriptions),
-        )
 
         # Convert to TimeBlock format for easier processing
         time_blocks = self._convert_to_time_blocks(all_step_descriptions)
@@ -84,12 +80,7 @@ class OverlapAwareBlockReducer:
             original_count=len(all_step_descriptions),
         )
 
-        self.logger.info(
-            "Block reduction complete: %d -> %d blocks (%d merged)",
-            result.original_count,
-            len(filtered_blocks),
-            merged_count,
-        )
+
 
         return result
 

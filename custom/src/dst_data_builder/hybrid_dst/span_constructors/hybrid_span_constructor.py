@@ -79,7 +79,7 @@ class HybridSpanConstructor(BaseSpanConstructor):
         self._validate_construct_spans_inputs(filtered_blocks, inferred_knowledge)
 
         total_blocks = len(filtered_blocks)
-        self.logger.info(
+        self.logger.debug(
             "🔍 Processing %d filtered blocks for DST span construction", total_blocks
         )
 
@@ -91,7 +91,7 @@ class HybridSpanConstructor(BaseSpanConstructor):
         clear_count = len(classification_result.clear_blocks)
         ambiguous_count = len(classification_result.ambiguous_blocks)
 
-        self.logger.info(
+        self.logger.debug(
             "📊 Matrix scoring: %d/%d clear blocks (%.1f%%), %d/%d ambiguous blocks (%.1f%%)",
             clear_count,
             total_blocks,
@@ -104,7 +104,7 @@ class HybridSpanConstructor(BaseSpanConstructor):
         # Phase 2: LLM Fallback for Ambiguous Cases
         llm_decisions = []
         if classification_result.ambiguous_blocks:
-            self.logger.info(
+            self.logger.debug(
                 "🤖 Triggering LLM fallback for %d ambiguous blocks", ambiguous_count
             )
 
@@ -120,13 +120,13 @@ class HybridSpanConstructor(BaseSpanConstructor):
                 ambiguous_block_objects, inferred_knowledge
             )
             llm_decisions = llm_result.decisions
-            self.logger.info(
+            self.logger.debug(
                 "✅ LLM resolved %d ambiguous blocks into %d successful decisions",
                 ambiguous_count,
                 llm_result.success_count,
             )
         else:
-            self.logger.info("✅ No ambiguous blocks found - using matrix scoring only")
+            self.logger.debug("✅ No ambiguous blocks found - using matrix scoring only")
 
         # Phase 3: Combine decisions and construct final spans
         final_spans = self._combine_decisions_and_construct_spans(
@@ -138,7 +138,7 @@ class HybridSpanConstructor(BaseSpanConstructor):
         )
 
         # Log final results
-        self.logger.info(
+        self.logger.debug(
             "🎯 Constructed %d final DST spans from %d processed blocks",
             len(final_spans),
             total_blocks,
@@ -440,7 +440,7 @@ class HybridSpanConstructor(BaseSpanConstructor):
 
         filtered_count = len(block_assignments) - len(validated_assignments)
         if filtered_count > 0:
-            self.logger.info(
+            self.logger.debug(
                 f"Temporal validation filtered {filtered_count} blocks with invalid timestamps: "
                 f"{len(block_assignments)} -> {len(validated_assignments)} assignments"
             )

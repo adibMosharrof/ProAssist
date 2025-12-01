@@ -63,7 +63,7 @@ class SimpleSpanConstructor(BaseSpanConstructor):
         total_blocks = len(filtered_blocks)
         total_steps = len(inferred_knowledge)
 
-        self.logger.info(
+        self.logger.debug(
             "🔄 Simple span construction: %d filtered blocks, %d inferred steps",
             total_blocks,
             total_steps,
@@ -143,7 +143,7 @@ class SimpleSpanConstructor(BaseSpanConstructor):
             dst_spans, total_blocks
         )
 
-        self.logger.info(
+        self.logger.debug(
             "✅ Simple span construction complete: %d final DST spans", len(dst_spans)
         )
 

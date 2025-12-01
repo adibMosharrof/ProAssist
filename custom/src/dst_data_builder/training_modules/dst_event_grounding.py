@@ -51,9 +51,9 @@ class DSTEventGrounding:
         # Update statistics
         self._update_grounding_statistics(video_data)
 
-        self.logger.info(
-            f"Added frames and labels to {len(updated_conversation)} turns"
-        )
+        # self.logger.info(
+        #     f"Added frames and labels to {len(updated_conversation)} turns"
+        # )
         return video_data
 
     def _add_frames_and_labels_to_turn(self, turn: Dict[str, Any], conversation: List[Dict[str, Any]]) -> Dict[str, Any]:

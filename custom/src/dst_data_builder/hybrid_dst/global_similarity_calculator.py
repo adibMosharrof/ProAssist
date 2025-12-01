@@ -87,11 +87,11 @@ class GlobalSimilarityCalculator:
                 [], filtered_blocks, 0, len(filtered_blocks), len(filtered_blocks)
             )
 
-        self.logger.info(
-            "Computing global similarity for %d blocks against %d steps",
-            len(filtered_blocks),
-            len(inferred_knowledge),
-        )
+        # self.logger.info(
+        #     "Computing global similarity for %d blocks against %d steps",
+        #     len(filtered_blocks),
+        #     len(inferred_knowledge),
+        # )
 
         # Ensure models are loaded
         self._ensure_models_loaded()
@@ -116,15 +116,15 @@ class GlobalSimilarityCalculator:
         ambiguous_count = len(ambiguous_blocks)
         total_blocks = len(filtered_blocks)
 
-        self.logger.info(
-            "Classification complete: %d/%d clear (%.1f%%), %d/%d ambiguous (%.1f%%)",
-            clear_count,
-            total_blocks,
-            (clear_count / total_blocks) * 100,
-            ambiguous_count,
-            total_blocks,
-            (ambiguous_count / total_blocks) * 100,
-        )
+        # self.logger.info(
+        #     "Classification complete: %d/%d clear (%.1f%%), %d/%d ambiguous (%.1f%%)",
+        #     clear_count,
+        #     total_blocks,
+        #     (clear_count / total_blocks) * 100,
+        #     ambiguous_count,
+        #     total_blocks,
+        #     (ambiguous_count / total_blocks) * 100,
+        # )
 
         return ClassificationResult(
             clear_blocks=clear_blocks,

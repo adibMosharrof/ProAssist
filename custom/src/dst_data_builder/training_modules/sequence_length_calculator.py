@@ -105,10 +105,17 @@ class SequenceLengthCalculator:
                 total_frames += frame_count
 
         # Count frames embedded in conversation events (DST format)
+        # Check for ANY turn with start_frame/end_frame, not just specific roles
         for turn in conversation:
-            if turn.get("role") in ["SPEAK", "DST_UPDATE"]:
+            # Skip if already counted as "frames" turn
+            if turn.get("role") == "frames":
+                continue
+                
+            # Count frames from any turn that has frame information
+            if "start_frame" in turn and "end_frame" in turn:
                 start_frame = turn.get("start_frame", 0)
-                end_frame = turn.get("end_frame", start_frame + 1)
+                end_frame = turn.get("end_frame", start_frame)
+                # end_frame is exclusive (frame range is [start, end))
                 frame_count = max(0, end_frame - start_frame)
                 total_frames += frame_count
 

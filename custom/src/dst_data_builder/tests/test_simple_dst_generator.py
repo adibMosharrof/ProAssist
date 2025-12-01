@@ -288,13 +288,9 @@ class TestSimpleDSTGenerator:
             sample_enhanced_data, "assembly101", "train"
         )
 
-        # Check that frame information is added
+        # Check that frame information is added to conversation turns
+        # Note: frames_file is NOT generated - it will be resolved from video_uid during training
         for sample in training_samples:
-            assert 'frames_file' in sample
-            # Should point to the correct frames file path
-            assert 'assembly101' in sample['frames_file']
-            assert sample['frames_file'].endswith('.arrow')
-
             # Conversation turns should have frame information
             for turn in sample['conversation']:
                 if turn['role'] in ['SPEAK', 'DST_UPDATE']:
@@ -456,9 +452,9 @@ class TestSimpleDSTGenerator:
         assert isinstance(training_samples, list)
         assert len(training_samples) > 0
 
-        # Check dataset-specific frame path
+        # Note: frames_file is NOT generated - it will be resolved from video_uid during training
         sample = training_samples[0]
-        assert 'ego4d' in sample['frames_file']
+        assert 'video_uid' in sample  # Verify video_uid is present for frame resolution
 
     def test_conversation_splitting_integration(self, sample_config):
         """Test integration with conversation splitting"""

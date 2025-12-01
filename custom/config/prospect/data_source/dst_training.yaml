@@ -2,23 +2,16 @@
 
 name: "dst_training"
 
-# Frame-level training data paths
-# dst_data_path: custom/outputs/dst_generated/proassist_label/2025-11-06/17-02-11_gpt-4o_proassist_50rows  # From DST generator
-dst_data_path: custom/outputs/dst_generated/proassist_label/2025-11-12/10-10-29_gpt-4o_proassist_50rows
-raw_data_path: data/proassist/processed_data
+# Training data path (updated to use ID-based format with precomputed embeddings)
+data_path: ${project_root}/custom/outputs/dst_generated/hybrid_dst/2025-11-30/00-56-27_gpt-4o_proassist_10rows
 
+# Dataset name
 datasets:
   - assembly101
-  # - ego4d
-  # - egoexolearn
-  # - epickitchens
-  # - holoassist
-  # - wtag
 
-# Frame-level data structure (training specific)
-fps: 2
-max_seq_len: 4096
-reserved_seq_len: 128
+# Data parameters
+max_seq_len: 4096  # Keep it fixed at 4096. I have created my data splits accordingly.
+neg_frame_sampling_rate: 0.3  # 30% negative frame sampling (reduce frames to avoid OOM)
 
 
 

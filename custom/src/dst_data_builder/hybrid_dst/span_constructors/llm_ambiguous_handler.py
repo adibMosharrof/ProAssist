@@ -82,9 +82,13 @@ class LLMAmbiguousHandler:
         self.llm_client = OpenAIAPIClient(
             generator_type="hybrid_dst_llm", logger=self.logger
         )
-
-        # Cost tracking
-        self.total_cost_estimate = 0.0
+        
+        # Create and reuse a single event loop
+        try:
+            self.loop = asyncio.get_event_loop()
+        except RuntimeError:
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
 
     def resolve_ambiguous_blocks(
         self, ambiguous_blocks: List[AmbiguousBlock], inferred_knowledge: List[str]
@@ -103,17 +107,17 @@ class LLMAmbiguousHandler:
             self.logger.info("No ambiguous blocks to resolve")
             return LLMHandlingResult([], 0, 0, 0, 0.0)
 
-        self.logger.info(
-            "🤖 Starting LLM fallback for %d ambiguous blocks", len(ambiguous_blocks)
-        )
+        # self.logger.info(
+        #     "🤖 Starting LLM fallback for %d ambiguous blocks", len(ambiguous_blocks)
+        # )
 
         # Prepare contexts for all ambiguous blocks
         contexts = self._prepare_contexts(ambiguous_blocks, inferred_knowledge)
 
         # Log LLM call details
-        self.logger.info(
-            "📡 Preparing %d LLM calls for ambiguous case resolution", len(contexts)
-        )
+        # self.logger.info(
+        #     "📡 Preparing %d LLM calls for ambiguous case resolution", len(contexts)
+        # )
         for i, context in enumerate(contexts[:3]):  # Log first 3 contexts
             self.logger.debug("LLM Context %d: %s...", i + 1, context[:200] + "...")
 
@@ -130,18 +134,18 @@ class LLMAmbiguousHandler:
         success_count = len([d for d in decisions if d.chosen_step_index >= 0])
         failure_count = len(ambiguous_blocks) - success_count
 
-        self.logger.info(
-            "🎯 LLM resolved %d ambiguous blocks into %d successful decisions",
-            len(ambiguous_blocks),
-            success_count,
-        )
+        # self.logger.info(
+        #     "🎯 LLM resolved %d ambiguous blocks into %d successful decisions",
+        #     len(ambiguous_blocks),
+        #     success_count,
+        # )
 
         return LLMHandlingResult(
             decisions=decisions,
             total_llm_calls=len(contexts),
             success_count=success_count,
             failure_count=failure_count,
-            total_cost_estimate=self.total_cost_estimate,
+            total_cost_estimate=0.0,
         )
 
     def resolve_bidirectional_conflicts(
@@ -167,9 +171,9 @@ class LLMAmbiguousHandler:
             self.logger.info("No bidirectional conflicts to resolve")
             return LLMHandlingResult([], 0, 0, 0, 0.0)
 
-        self.logger.info(
-            "🤖 Starting LLM resolution for %d bidirectional conflicts", len(conflicts)
-        )
+        # self.logger.info(
+        #     "🤖 Starting LLM resolution for %d bidirectional conflicts", len(conflicts)
+        # )
 
         # Prepare contexts for all conflicts
         contexts = self._prepare_bidirectional_contexts(
@@ -177,19 +181,19 @@ class LLMAmbiguousHandler:
         )
 
         # Log LLM call details
-        self.logger.info(
-            "📡 Preparing %d LLM calls for bidirectional conflict resolution",
-            len(contexts),
-        )
-        for i, context in enumerate(contexts[:3]):  # Log first 3 contexts
-            self.logger.debug(
-                "Bidirectional Context %d: %s...", i + 1, context[:200] + "..."
-            )
+        # self.logger.info(
+        #     "📡 Preparing %d LLM calls for bidirectional conflict resolution",
+        #     len(contexts),
+        # )
+        # for i, context in enumerate(contexts[:3]):  # Log first 3 contexts
+            # self.logger.debug(
+            #     "Bidirectional Context %d: %s...", i + 1, context[:200] + "..."
+            # )
 
         # Batch query LLM
         responses = self._batch_query_llm(contexts)
 
-        self.logger.info("✅ Received %d LLM responses for conflicts", len(responses))
+        # self.logger.info("✅ Received %d LLM responses for conflicts", len(responses))
 
         # Parse responses and extract decisions
         decisions = self._parse_bidirectional_decisions(
@@ -199,18 +203,18 @@ class LLMAmbiguousHandler:
         success_count = len([d for d in decisions if d.chosen_step_index >= 0])
         failure_count = len(conflicts) - success_count
 
-        self.logger.info(
-            "🎯 LLM resolved %d bidirectional conflicts into %d successful decisions",
-            len(conflicts),
-            success_count,
-        )
+        # self.logger.info(
+        #     "🎯 LLM resolved %d bidirectional conflicts into %d successful decisions",
+        #     len(conflicts),
+        #     success_count,
+        # )
 
         return LLMHandlingResult(
             decisions=decisions,
             total_llm_calls=len(contexts),
             success_count=success_count,
             failure_count=failure_count,
-            total_cost_estimate=self.total_cost_estimate,
+            total_cost_estimate=0.0,
         )
 
     def _prepare_contexts(
@@ -314,15 +318,22 @@ Choose the step number (1, 2, 3, etc.) that best matches this block."""
                 len(batch),
             )
 
-            # Process batch concurrently
-            batch_responses = asyncio.run(self._query_batch_concurrently(batch))
-            all_responses.extend(batch_responses)
+            # Process batch concurrently using persistent event loop
+            try:
+                batch_responses = self.loop.run_until_complete(
+                    self._query_batch_concurrently(batch)
+                )
+                all_responses.extend(batch_responses)
+            except Exception as e:
+                self.logger.error(f"Error processing batch {batch_num}: {e}")
+                # Return empty responses for this batch on error
+                all_responses.extend([""] * len(batch))
 
         return all_responses
 
     async def _query_batch_concurrently(self, batch: List[str]) -> List[str]:
         """
-        Query LLM for a batch of contexts concurrently
+        Query LLM for a batch of contexts with rate limiting
 
         Args:
             batch: List of contexts to query
@@ -331,7 +342,11 @@ Choose the step number (1, 2, 3, etc.) that best matches this block."""
             List of LLM responses
         """
 
-        async def query_single_context(context: str) -> str:
+        async def query_single_context(context: str, delay: float = 0.0) -> str:
+            # Add staggered delay to avoid rate limiting
+            if delay > 0:
+                await asyncio.sleep(delay)
+            
             try:
                 success, response = await self.llm_client.generate_completion(
                     prompt=context,
@@ -350,8 +365,8 @@ Choose the step number (1, 2, 3, etc.) that best matches this block."""
                 self.logger.error("LLM query exception: %s", e)
                 return ""
 
-        # Execute all queries in the batch concurrently
-        tasks = [query_single_context(context) for context in batch]
+        # Execute queries with staggered delays (0.2s between each call) to avoid rate limiting
+        tasks = [query_single_context(context, delay=i * 0.2) for i, context in enumerate(batch)]
         responses = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Convert exceptions to empty strings
@@ -481,23 +496,6 @@ Choose the step number (1, 2, 3, etc.) that best matches this block."""
                     llm_used=True,
                 )
 
-    def get_cost_estimate(self, num_tokens: int) -> float:
-        """
-        Estimate cost for LLM usage
-
-        Args:
-            num_tokens: Number of tokens in the request
-
-        Returns:
-            Cost estimate in USD
-        """
-        # Rough cost estimation for GPT-4o (adjust as needed)
-        cost_per_token = 0.00001  # $0.01 per 1K tokens
-        estimated_cost = num_tokens * cost_per_token
-
-        self.total_cost_estimate += estimated_cost
-        return estimated_cost
-
     def get_handling_statistics(self, result: LLMHandlingResult) -> Dict[str, Any]:
         """
         Get statistics about LLM handling
@@ -525,12 +523,6 @@ Choose the step number (1, 2, 3, etc.) that best matches this block."""
             ),
             "average_confidence": (
                 float(sum(confidences) / len(confidences)) if confidences else 0.0
-            ),
-            "estimated_total_cost": result.total_cost_estimate,
-            "cost_per_block": (
-                result.total_cost_estimate / len(result.decisions)
-                if result.decisions
-                else 0.0
             ),
         }
 

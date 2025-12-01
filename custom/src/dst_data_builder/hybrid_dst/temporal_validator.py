@@ -82,15 +82,11 @@ class TemporalOrderingValidator:
             self.logger.warning("No DST spans provided for temporal validation")
             return ValidationResult(True, [], [], 0, 0)
 
-        self.logger.info(
-            "Starting temporal validation for %d DST spans", len(dst_spans)
-        )
 
         # Extract temporal information and collect extraction violations
         spans_with_time, extraction_violations = self._extract_temporal_info(dst_spans)
 
         if len(spans_with_time) < 2:
-            self.logger.info("Less than 2 spans, temporal ordering not applicable")
             # Check if there are any error violations
             has_errors = any(v.severity == "error" for v in extraction_violations)
             return ValidationResult(
@@ -286,9 +282,7 @@ class TemporalOrderingValidator:
         violations: List[TemporalViolation],
     ):
         """Log validation results"""
-        if violation_count == 0:
-            self.logger.info("✅ Temporal validation passed: %d spans", span_count)
-        else:
+        if violation_count > 0:
             error_count = len([v for v in violations if v.severity == "error"])
             warning_count = len([v for v in violations if v.severity == "warning"])
 

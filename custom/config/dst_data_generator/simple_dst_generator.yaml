@@ -20,7 +20,7 @@ training_creation:
 
   # Sequence calculation
   max_seq_len: 4096                   # SmolVLM sequence limit
-  num_tokens_per_img: 1               # Tokens per frame
+  num_tokens_per_img: 1               # Tokens per frame (SmolVLM2 uses 1 image token per image)
   tokenizer_name: "HuggingFaceTB/SmolVLM2-2.2B-Instruct"  # For token counting
   special_tokens_count: 10            # Special tokens and formatting overhead
 
@@ -50,7 +50,7 @@ logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-exp_name: 50rows
+exp_name: 10rows
 # Hydra configuration
 hydra:
   run:

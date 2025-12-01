@@ -17,6 +17,7 @@ class OpenAIAPIClient:
         "single": "OPENAI_API_KEY",
         "deterministic": "OPENAI_API_KEY",
         "proassist_label": "OPENAI_API_KEY",
+        "hybrid_dst_llm": "OPENAI_API_KEY",
     }
 
     def __init__(
@@ -87,7 +88,7 @@ class OpenAIAPIClient:
             return False, "OpenAI client not initialized. Check API key."
 
         try:
-            self.logger.info(f"Making GPT API call with {len(prompt)} character prompt...")
+            # self.logger.info(f"Making GPT API call with {len(prompt)} character prompt...")
 
             response = await self.client.chat.completions.create(
                 model=model,
@@ -103,7 +104,7 @@ class OpenAIAPIClient:
             )
 
             raw_content = response.choices[0].message.content.strip()
-            self.logger.info(f"Received response: {len(raw_content)} characters")
+            # self.logger.info(f"Received response: {len(raw_content)} characters")
 
             return True, raw_content
 

@@ -99,10 +99,6 @@ class ConversationSplitter:
 
         should_split = estimated_tokens > split_threshold
 
-        self.logger.info(
-            f"Split decision: {estimated_tokens} tokens vs threshold {split_threshold} -> {should_split}"
-        )
-
         if should_split:
             self.logger.debug(
                 f"Conversation estimated at {estimated_tokens} tokens, "
@@ -113,7 +109,7 @@ class ConversationSplitter:
 
     def _estimate_conversation_length(self, conversation: List[Dict[str, Any]]) -> int:
         """
-        Quick estimation of conversation length for split decision
+        Estimate conversation length by counting unique frames and all text tokens
 
         Args:
             conversation: List of conversation turns
@@ -121,12 +117,55 @@ class ConversationSplitter:
         Returns:
             Estimated token count
         """
-        total_tokens = 0
+        # Collect all unique frames across all turns
+        unique_frames = set()
+        total_text_tokens = 0
 
-        # Use the same logic as _estimate_turn_length for consistency
         for turn in conversation:
-            turn_length = self._estimate_turn_length(turn)
-            total_tokens += turn_length
+            turn_role = turn.get("role", "unknown")
+            
+            # Skip system prompts in frame counting (they're global context)
+            if turn_role == "system":
+                # System prompts still contribute text tokens
+                content = turn.get("content", "")
+                if content:
+                    total_text_tokens += self._count_content_tokens(content, turn)
+                total_text_tokens += 10  # Role marker overhead
+                continue
+
+            # Collect frame indices for this turn if available
+            if "start_frame" in turn and "end_frame" in turn:
+                start_frame = turn["start_frame"]
+                end_frame = turn["end_frame"]
+                
+                if end_frame > start_frame:
+                    # Add all frames in this range to the unique set
+                    for frame_idx in range(start_frame, end_frame):
+                        unique_frames.add(frame_idx)
+
+            # Count text tokens from this turn
+            content = turn.get("content", "")
+            if content:
+                content_tokens = self._count_content_tokens(content, turn)
+                total_text_tokens += content_tokens
+
+            # Add role marker and formatting overhead
+            total_text_tokens += 10
+
+        # Calculate total tokens: unique frames × tokens_per_frame + text tokens
+        unique_frame_count = len(unique_frames)
+        image_tokens = unique_frame_count * self.num_tokens_per_img
+        
+        # Add separator tokens if model uses them
+        if self.training_config.get("use_img_sep_token", False) and unique_frame_count > 0:
+            image_tokens += max(0, unique_frame_count - 1)
+
+        total_tokens = image_tokens + total_text_tokens
+        
+        self.logger.debug(
+            f"Conversation length: {unique_frame_count} unique frames × {self.num_tokens_per_img} "
+            f"tokens/frame = {image_tokens} image tokens + {total_text_tokens} text tokens = {total_tokens} total"
+        )
 
         return total_tokens
 
@@ -134,7 +173,7 @@ class ConversationSplitter:
         self, conversation: List[Dict[str, Any]], original_video_data: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
         """
-        Split conversation by calculating sequence length as we build it
+        Split conversation by calculating sequence length with unique frame counting
 
         Args:
             conversation: List of conversation turns
@@ -145,21 +184,22 @@ class ConversationSplitter:
         """
         segments = []
         current_segment_turns = []
-        current_length_estimate = 0
 
         for i, turn in enumerate(conversation):
-            # Estimate length of adding this turn
-            turn_length_estimate = self._estimate_turn_length(turn)
+            # Tentatively add this turn to current segment
+            current_segment_turns.append(turn)
+            
+            # Recalculate total length estimate for current segment with unique frames
+            current_length_estimate = self._estimate_conversation_length(current_segment_turns)
 
-            # Check if adding this turn would exceed limit
-            would_exceed = (current_length_estimate + turn_length_estimate) > (
-                self.max_seq_len * 0.9
-            )
+            # Check if this segment would exceed limit
+            would_exceed = current_length_estimate > (self.max_seq_len * 0.9)
 
-            # If would exceed and we have a substantial segment, create new segment
-            if (
-                would_exceed and len(current_segment_turns) >= 2
-            ):  # Need at least 2 turns
+            # If would exceed and we have a substantial segment, split here
+            if would_exceed and len(current_segment_turns) >= 2:
+                # Remove the turn that caused the overflow (it'll go in next segment)
+                current_segment_turns.pop()
+                
                 # Create segment with current conversation
                 segment = self._create_conversation_segment(
                     current_segment_turns, original_video_data, len(segments)
@@ -180,29 +220,9 @@ class ConversationSplitter:
                 current_segment_turns = self._create_overlap_context(
                     conversation, i, len(segments)
                 )
-
-                # Add DST state info to overlap context for continuity
-                if dst_state_at_split:
-                    dst_context_time = current_segment_turns[0].get("time", 0) if current_segment_turns else 0
-                    # Calculate frame range for DST_CONTEXT turn (use same as first turn or minimal range)
-                    fps = self.training_config.get("fps", 2)
-                    dst_context_frame = int(dst_context_time * fps)
-
-                    current_segment_turns.insert(0, {
-                        "role": "DST_CONTEXT",
-                        "content": f"Previous state: {dst_state_at_split}",
-                        "time": dst_context_time,
-                        "start_frame": dst_context_frame,
-                        "end_frame": dst_context_frame + 1  # Single frame for context
-                    })
-
-                current_length_estimate = self._estimate_conversation_length(
-                    current_segment_turns
-                )
-            else:
-                # Add turn to current segment
+                
+                # Add the turn that caused overflow to the new segment
                 current_segment_turns.append(turn)
-                current_length_estimate += turn_length_estimate
 
         # Add final segment if it has content
         if current_segment_turns:
@@ -216,6 +236,72 @@ class ConversationSplitter:
 
             segments.append(segment)
 
+        # Ensure all referenced frames are included in each segment's frame range
+        segments = self._ensure_frame_coverage(segments)
+
+        return segments
+
+    def _ensure_frame_coverage(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Ensure that each segment includes all frames referenced by its conversation turns,
+        and add system prompts to segments that don't have one.
+        
+        Args:
+            segments: List of conversation segments with frame information
+            
+        Returns:
+            Updated segments with expanded frame ranges and system prompts
+        """
+        for segment in segments:
+            conversation = segment.get("conversation", [])
+            if not conversation:
+                continue
+            
+            # Ensure segment starts with a system prompt
+            first_turn_role = conversation[0].get("role") if conversation else None
+            if first_turn_role != "system":
+                # Add system prompt at the beginning
+                system_prompt = {
+                    "role": "system",
+                    "content": "You are a helpful assistant.",
+                    "start_frame": 0,
+                    "end_frame": 2,
+                    "labels": "system|generic"
+                }
+                conversation.insert(0, system_prompt)
+                segment["conversation"] = conversation
+                self.logger.debug("Added system prompt to segment that didn't have one")
+            
+            # Find all frame indices referenced in this segment's conversation
+            referenced_frames = set()
+            for turn in conversation:
+                if "start_frame" in turn and "end_frame" in turn:
+                    start_frame = turn["start_frame"]
+                    end_frame = turn["end_frame"]
+                    if end_frame > start_frame:
+                        for frame_idx in range(start_frame, end_frame):
+                            referenced_frames.add(frame_idx)
+            
+            if not referenced_frames:
+                # No frames referenced, skip
+                continue
+            
+            # Update segment's frame range to include all referenced frames
+            min_frame = min(referenced_frames)
+            max_frame = max(referenced_frames) + 1  # +1 because max_frame is exclusive
+            
+            old_start = segment.get("start_frame_idx")
+            old_end = segment.get("end_frame_idx")
+            
+            segment["start_frame_idx"] = min_frame
+            segment["end_frame_idx"] = max_frame
+            
+            if old_start != min_frame or old_end != max_frame:
+                self.logger.debug(
+                    f"Updated segment frame range from [{old_start}, {old_end}) to [{min_frame}, {max_frame}) "
+                    f"to include all {len(referenced_frames)} referenced frames"
+                )
+        
         return segments
 
     def _estimate_turn_length(self, turn: Dict[str, Any]) -> int:

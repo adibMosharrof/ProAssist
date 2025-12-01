@@ -57,7 +57,7 @@ class DatasetMetadataGenerator:
             "dataset": dataset_name,
             "video_uid": video_uid,
             "clip_idx": clip_idx,
-            "frames_file": video_data.get("frames_file", ""),
+            # Note: frames_file NOT included - DST training resolves it from video_uid
             "max_seq_len": self.training_config.get("max_seq_len", 4096),
             "seq_len": video_data.get("seq_len", 0),
             "num_tokens_per_img": self.training_config.get("num_tokens_per_img", 1),
@@ -91,9 +91,6 @@ class DatasetMetadataGenerator:
         # Update video data with metadata
         video_data.update(metadata)
 
-        self.logger.info(
-            f"Generated metadata for {video_uid}: user_type={user_type}, clip_idx={clip_idx}"
-        )
         return video_data
 
     def _extract_user_type(self, video_data: Dict[str, Any]) -> str:

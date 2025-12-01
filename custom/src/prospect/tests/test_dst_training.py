@@ -84,9 +84,11 @@ def main():
             logger.info("🤖 Testing model loading...")
             from transformers import AutoProcessor
 
+            # Use N=1 config to reduce token count (1 patch → 81 tokens per image)
             processor = AutoProcessor.from_pretrained(
                 config["model"]["name"],
                 trust_remote_code=True,
+                size={"longest_edge": 384}  # Force N=1 configuration
             )
             logger.info("✅ Model processor loaded successfully")
         else:

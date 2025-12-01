@@ -15,6 +15,7 @@ from dst_data_builder.hybrid_dst.span_constructors import (
     SimpleSpanConstructor,
     HybridSpanConstructor,
     BidirectionalSpanConstructor,
+    LLMSpanConstructor,
 )
 from dst_data_builder.hybrid_dst.temporal_validator import TemporalOrderingValidator
 from dst_data_builder.hybrid_dst.utils import (
@@ -71,7 +72,8 @@ class HybridDSTLabelGenerator(BaseGPTGenerator):
         """Initialize hybrid DST components using provided config"""
         self.overlap_reducer = OverlapAwareBlockReducer(config)
         self.simple_span_constructor = SimpleSpanConstructor(config)
-        self.hybrid_span_constructor = BidirectionalSpanConstructor(config, model_cfg)
+        # self.hybrid_span_constructor = BidirectionalSpanConstructor(config, model_cfg)
+        self.hybrid_span_constructor = LLMSpanConstructor(config, model_cfg)
         self.temporal_validator = TemporalOrderingValidator(config)
 
     async def _try_generate_and_validate(
@@ -101,7 +103,7 @@ class HybridDSTLabelGenerator(BaseGPTGenerator):
         inferred_knowledge = input_data.get("inferred_knowledge", "")
         all_step_descriptions = input_data.get("all_step_descriptions", "")
 
-        self.logger.info("Starting hybrid DST processing")
+        self.logger.debug("Starting hybrid DST processing")
 
         # Parse input
         blocks = parse_blocks(all_step_descriptions)
@@ -116,7 +118,7 @@ class HybridDSTLabelGenerator(BaseGPTGenerator):
 
         # Phase 2: Decision Tree - Simple Span vs Hybrid Span Constructor
         if len(filtered_blocks) == len(steps):
-            self.logger.info(
+            self.logger.debug(
                 "🔄 Using Simple Span Constructor (equal counts: %d == %d)",
                 len(filtered_blocks),
                 len(steps),
@@ -125,7 +127,7 @@ class HybridDSTLabelGenerator(BaseGPTGenerator):
                 filtered_blocks, steps
             )
         else:
-            self.logger.info(
+            self.logger.debug(
                 "🔄 Using Bidirectional Span Constructor (unequal counts: %d != %d)",
                 len(filtered_blocks),
                 len(steps),
@@ -176,16 +178,16 @@ class HybridDSTLabelGenerator(BaseGPTGenerator):
         final_spans: List[Dict[str, Any]],
     ) -> None:
         """Log processing statistics"""
-        self.logger.info(
+        self.logger.debug(
             f"Block reduction: {reduction_result.original_count} -> {len(reduction_result.filtered_blocks)}"
         )
-        self.logger.info(
+        self.logger.debug(
             f"Span construction: {len(construction_result.dst_spans)} spans"
         )
-        self.logger.info(
+        self.logger.debug(
             f"Temporal validation: {len(validation_result.sorted_spans)} validated spans"
         )
-        self.logger.info(f"Span integrity check: {len(final_spans)} final spans")
+        self.logger.debug(f"Span integrity check: {len(final_spans)} final spans")
 
     def _validate_span_integrity(
         self, spans: List[Dict[str, Any]]
@@ -298,10 +300,10 @@ class HybridDSTLabelGenerator(BaseGPTGenerator):
         This method is called by the DSTDataProcessor to ensure models are loaded
         before processing videos, especially in multiprocessing scenarios.
         """
-        self.logger.info("🔧 Ensuring ML models are loaded for hybrid DST generation")
+        self.logger.debug("🔧 Ensuring ML models are loaded for hybrid DST generation")
 
         # Ensure models are loaded in the hybrid span constructor (only needed for complex cases)
         if hasattr(self.hybrid_span_constructor, "similarity_calculator"):
             self.hybrid_span_constructor.similarity_calculator._ensure_models_loaded()
 
-        self.logger.info("✅ ML models loaded successfully")
+        self.logger.debug("✅ ML models loaded successfully")

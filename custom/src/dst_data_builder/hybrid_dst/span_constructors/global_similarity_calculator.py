@@ -87,7 +87,7 @@ class GlobalSimilarityCalculator:
                 [], filtered_blocks, 0, len(filtered_blocks), len(filtered_blocks)
             )
 
-        self.logger.info(
+        self.logger.debug(
             "Computing global similarity for %d blocks against %d steps",
             len(filtered_blocks),
             len(inferred_knowledge),
@@ -116,7 +116,7 @@ class GlobalSimilarityCalculator:
         ambiguous_count = len(ambiguous_blocks)
         total_blocks = len(filtered_blocks)
 
-        self.logger.info(
+        self.logger.debug(
             "Classification complete: %d/%d clear (%.1f%%), %d/%d ambiguous (%.1f%%)",
             clear_count,
             total_blocks,
@@ -206,8 +206,27 @@ class GlobalSimilarityCalculator:
         # Predict NLI probabilities [contradiction, neutral, entailment]
         if pairs:
             raw_probs = self.nli_model.predict(pairs, convert_to_numpy=True)
-            # Apply softmax to convert logits to probabilities
-            scores = (raw_probs - raw_probs.min()) / (raw_probs.max() - raw_probs.min() + 1e-8)
+            # raw_probs shape: 
+            # - For 3-class NLI models: (num_pairs, 3) - [contradiction, neutral, entailment]
+            # - For ranking models: (num_pairs,) or (num_pairs, 1) - single relevance score
+            
+            # Ensure at least 2D shape for consistent handling
+            if raw_probs.ndim == 1:
+                raw_probs = raw_probs.reshape(-1, 1)
+            
+            # Handle both 3-class NLI and ranking models
+            if raw_probs.shape[1] >= 3:
+                # 3-class NLI model: extract entailment scores (index 2)
+                entailment_scores = raw_probs[:, 2]
+            else:
+                # Ranking model: use the single score (or first column if 2D)
+                entailment_scores = raw_probs[:, 0]
+            
+            # Normalize scores to [0, 1]
+            if len(entailment_scores) > 0:
+                scores = (entailment_scores - entailment_scores.min()) / (entailment_scores.max() - entailment_scores.min() + 1e-8)
+            else:
+                scores = entailment_scores
 
             # Map back to matrix
             for idx, (i, k) in enumerate(index_map):

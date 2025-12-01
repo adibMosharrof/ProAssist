@@ -2,38 +2,74 @@
 
 name: "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
 log_name: "dst-smolvlm2-2.2b"
-device: "cuda"
-torch_dtype: "bfloat16"
 
-# Generation parameters
-max_new_tokens: 100
-temperature: 0.7
-top_p: 0.9
-do_sample: true
+# Vision encoding strategy (following ProAssist approach)
+# SmolVLM2 uses multi-patch strategy: 1 global context token + 16 local detail tokens
+# Strategy: Extract ONLY the global [CLS] token from the first patch (index [0,0,:])
+# This reduces image tokens from 17 patches × 81 seq → 1 global [CLS] per image (99.9% reduction!)
+# The global [CLS] token is projected from vision space (2048-dim) to LLM space via trainable projector
+use_img_cls_token: true  # Extract [CLS] token from vision encoder (1 token per image)
 
-# Cache directory (important for your setup)
-cache_dir: "/u/siddique-d1/adib/.cache/huggingface"
+# Vision hidden size - must match SmolVLM2's SigLIP vision encoder output dimension
+# SmolVLM2 uses SigLIP-ViT which outputs 2048-dim per token
+# The projector will map: 2048-dim vision → hidden_size (1280-dim) for LLM input
+vision_hidden_size: 2048  # SigLIP vision encoder output dimension
 
-# DST-specific configuration
-num_dst_states: 3  # Always 3 states for DST training: Not Started, In Progress, Completed
-dst_update_loss_weight: 1.0
-dst_state_loss_weight: 1.0
-speaking_loss_weight: 1.0
+# Vision processor configuration
+processor_size: null  # Use default from model
+# Alternative for training: use smaller size to save memory
+# processor_size: 224  # Smaller images during training (default is 384)
+
+# Multi-task loss weights (4 losses)
+# 1. speaking_gen_weight: LM loss for assistant utterances
+# 2. speaking_binary_weight: BCE loss for when to speak
+# 3. dst_gen_weight: LM loss for DST state generation
+# 4. dst_binary_weight: BCE loss for when to update DST
+speaking_gen_weight: 1.0         # LM loss for what assistant says
+speaking_binary_weight: 1.0      # BCE loss for speaking decision
+dst_gen_weight: 1.0              # LM loss for DST state text
+dst_binary_weight: 1.0           # BCE loss for DST update decision
+
+# Focal loss parameters (for class imbalance handling)
+focal_loss_alpha: 0.25    # Weighting factor for rare classes (0.0 to 1.0)
+focal_loss_gamma: 2.0     # Focusing parameter (typically 1.0 to 3.0)
 
 # Training parameters
-hidden_size: 2816
-max_seq_len: 4096
-reserved_seq_len: 128
-gradient_accumulation_steps: 8
-learning_rate: 1e-5
-num_epochs: 10
+# num_train_epochs: 25
+num_train_epochs: 1 
+per_device_train_batch_size: 1
+per_device_eval_batch_size: 1
+gradient_accumulation_steps: 5
+learning_rate: 1.0e-4
 weight_decay: 0.01
-warmup_steps: 1000
+warmup_steps: 10
 
-# Data parameters
-batch_size: 2  # For 24GB RTX setup
-num_workers: 4
-fps: 2
+# Optimization
+bf16: true
+fp16: false
+gradient_checkpointing: true
+# Note: gradient_checkpointing_kwargs removed since it's handled before Accelerator.prepare()
 
-# Model type (DST heads are always included)
-model_type: "dst_smolvlm_with_strategies"
+# Evaluation
+eval_strategy: "steps"
+# eval_steps: 10
+eval_steps: 3
+save_steps: 9
+save_total_limit: 5
+
+# Early stopping
+load_best_model_at_end: true
+metric_for_best_model: "eval_loss"
+greater_is_better: false
+early_stopping_patience: 3  # Stop if validation loss doesn't improve for 3 evaluations
+
+# Logging
+# logging_steps: 10
+logging_steps: 1
+report_to: "wandb"
+
+# Other
+remove_unused_columns: false
+ddp_find_unused_parameters: false  # Required when freezing most parameters (frozen mode training)
+max_steps: 15  # Train for full epochs unless overridden
+# max_steps: -1  # Train for full epochs unless overridden

@@ -1,26 +1,18 @@
-# DST Training Configuration using existing configs with defaults
+# DST Training Configuration
 defaults:
   - model: dst_smolvlm2
   - data_source: dst_training
   - _self_
 
+# Output directory
+output_dir: custom/outputs/prospect/dst_training/${now:%Y-%m-%d}/${now:%H-%M-%S}_${model.log_name}
 
-# Training-specific overrides (keep it simple)
-training:
-  num_epochs: 10
-  eval_steps: 500
-  logging_steps: 100
-  save_steps: 500
-  
-# Experiment name for display
-exp_name: "dst_training_assembly"
+project_root: /u/siddique-d1/adib/ProAssist
+raw_data_root: ${project_root}/data/proassist/processed_data
+# Experiment name
+exp_name: "dst_training_assembly101"
 
-# Logging configuration
-logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-
-# Hydra output configuration
+# Hydra configuration
 hydra:
   run:
-    dir: custom/outputs/prospect/dst_training/${now:%Y-%m-%d}/${now:%H-%M-%S}_${model.log_name}_${exp_name}
+    dir: ${output_dir}

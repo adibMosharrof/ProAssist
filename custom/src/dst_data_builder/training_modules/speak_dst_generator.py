@@ -105,9 +105,9 @@ class SpeakDSTGenerator:
         # Update video data with training conversation
         video_data["conversation"] = training_conversation
 
-        self.logger.info(
-            f"Created training conversation with {len(training_conversation)} turns"
-        )
+        # self.logger.info(
+        #     f"Created training conversation with {len(training_conversation)} turns"
+        # )
         return video_data
 
     def _create_system_prompt(self, video_data: Dict[str, Any]) -> str:

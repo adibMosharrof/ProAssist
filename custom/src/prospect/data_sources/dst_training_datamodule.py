@@ -72,24 +72,20 @@ class DSTTrainingDataModule:
 
         # Create train dataset
         self.train_dataset = DSTTrainingDataset(
-            dst_data_path=self.dst_data_path,
-            raw_data_path=self.raw_data_path,
-            datasets=self.datasets,
-            split="train",
-            fps=self.fps,
+            data_path=self.dst_data_path,
+            step_name="train",
+            dataset_name=self.datasets[0] if self.datasets else "default",
             max_seq_len=self.max_seq_len,
-            num_frames_per_conversation=self.num_frames_per_conversation,
+            neg_frame_sampling_rate=0.5,
         )
 
         # Create validation dataset
         self.val_dataset = DSTTrainingDataset(
-            dst_data_path=self.dst_data_path,
-            raw_data_path=self.raw_data_path,
-            datasets=self.datasets,
-            split="val",
-            fps=self.fps,
+            data_path=self.dst_data_path,
+            step_name="val",
+            dataset_name=self.datasets[0] if self.datasets else "default",
             max_seq_len=self.max_seq_len,
-            num_frames_per_conversation=self.num_frames_per_conversation,
+            neg_frame_sampling_rate=1.0,
         )
 
         logger.info(

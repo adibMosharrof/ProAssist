@@ -6,6 +6,7 @@ import hydra
 from hydra.core.hydra_config import HydraConfig
 import logging
 from tqdm import tqdm
+import uuid
 
 from dst_data_builder.dst_data_processor import DSTDataProcessor
 from dst_data_builder.hybrid_dst.hybrid_dst_generator import (
@@ -78,9 +79,9 @@ class SimpleDSTGenerator:
         # Initialize all training modules
         training_config = self.cfg.get("training_creation", {})
 
-        self.frame_integration = FrameIntegration(training_config)
+        self.frame_integration = FrameIntegration(self.cfg)
         self.sequence_calculator = SequenceLengthCalculator(training_config)
-        self.conversation_splitter = ConversationSplitter(training_config)
+        self.conversation_splitter = ConversationSplitter(self.cfg)
         self.dst_state_tracker = DSTStateTracker(training_config)
         self.speak_dst_generator = SpeakDSTGenerator(training_config)
         self.dst_grounding = DSTEventGrounding(training_config)
@@ -127,6 +128,7 @@ class SimpleDSTGenerator:
 
         training_samples = []
         validation_stats = {"valid": 0, "invalid": 0, "errors": []}
+        sample_counter = 0  # Global counter for absolute uniqueness
 
         for video_data in enhanced_data:
             # 1. Create training conversation structure
@@ -166,6 +168,15 @@ class SimpleDSTGenerator:
                 segment_data = self.metadata_generator.add_training_metadata(
                     segment_data, dataset_name, split, clip_idx=segment_idx
                 )
+                
+                # Add unique ID based on video_uid, clip_idx, segment_idx, and sample counter
+                video_uid = segment_data.get('video_uid', 'unknown')
+                clip_idx = segment_data.get('clip_idx', 0)
+                segment_data['id'] = str(uuid.uuid5(
+                    uuid.NAMESPACE_DNS, 
+                    f"{video_uid}_{clip_idx}_{segment_idx}_{sample_counter}"
+                ))
+                sample_counter += 1
 
                 # Validate training format before adding to samples
                 if self.training_validators:
@@ -225,6 +236,7 @@ class SimpleDSTGenerator:
         datasets = cfg.data_source.datasets
         # splits = ["train", "val", "test"]
         splits = ["test", "val", "train"]
+        # splits = ["test"]
         num_rows = cfg.data_source.num_rows
 
         self.logger.info("🚀 Starting Simple DST Generation")
@@ -313,13 +325,6 @@ class SimpleDSTGenerator:
                         else:
                             self.logger.error(f"Expected intermediate file not found: {enhanced_file}")
 
-                        split_pbar.set_postfix(
-                            {
-                                "✅ Processed": total_processed,
-                                "❌ Failed": total_failed,
-                            }
-                        )
-
                         split_pbar.update(1)
 
                 dataset_pbar.update(1)
@@ -338,8 +343,13 @@ class SimpleDSTGenerator:
 def main(cfg: DictConfig) -> None:
     """Main function with Hydra configuration"""
     logger = logging.getLogger(__name__)
+    
+    # Suppress verbose logging from third-party libraries
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("openai").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    
     logger.info("🚀 Starting Simple DST Generator with Hydra configuration...")
-    logger.info("Configuration:\n%s", OmegaConf.to_yaml(cfg))
 
     generator = SimpleDSTGenerator(cfg)
     generator.run(cfg)

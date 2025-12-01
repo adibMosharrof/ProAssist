@@ -48,8 +48,8 @@ class FrameIntegration:
             self.logger.warning("No conversation found in video data")
             return video_data
 
-        # Add frames file path
-        video_data["frames_file"] = self._get_frames_file_path(video_data, dataset_name)
+        # Note: frames_file path is NOT added here since DST training doesn't use frames
+        # The training dataset will handle frame loading directly from video_uid when needed
 
         # Add frame metadata to each conversation turn
         updated_conversation = []
@@ -160,224 +160,33 @@ class FrameIntegration:
 
         return start_frame, end_frame
 
-    def calculate_event_frame_ranges(
-        self, conversation: List[Dict[str, Any]]
-    ) -> List[Tuple[int, int, float]]:
-        """
-        Calculate frame ranges for all conversation events
-
-        Args:
-            conversation: List of conversation turns
-
-        Returns:
-            List of (start_frame, end_frame, timestamp) tuples
-        """
-        frame_ranges = []
-
-        for turn in conversation:
-            timestamp = turn.get("time", 0)
-            start_frame, end_frame = self._calculate_frame_range_for_timestamp(
-                timestamp
-            )
-            frame_ranges.append((start_frame, end_frame, timestamp))
-
-        return frame_ranges
-
-    def validate_frame_alignment(self, conversation: List[Dict[str, Any]]) -> bool:
-        """
-        Ensure frame ranges align with conversation temporal flow
-
-        Args:
-            conversation: List of conversation turns
-
-        Returns:
-            True if frames are properly aligned
-        """
-        frame_ranges = self.calculate_event_frame_ranges(conversation)
-
-        # Check temporal ordering
-        for i in range(1, len(frame_ranges)):
-            prev_end = frame_ranges[i - 1][1]
-            curr_start = frame_ranges[i][0]
-
-            # Allow some overlap but check for major gaps
-            if curr_start > prev_end + self.fps * 2:  # Allow up to 2 seconds gap
-                self.logger.warning(
-                    f"Large temporal gap between turns: "
-                    f"turn {i-1} ends at frame {prev_end}, "
-                    f"turn {i} starts at frame {curr_start}"
-                )
-                return False
-
-        self.logger.debug("Frame alignment validation passed")
-        return True
-
-    def _get_frames_file_path(
-        self, video_data: Dict[str, Any], dataset_name: str
-    ) -> str:
-        """
-        Generate frames file path for the video
-
-        Args:
-            video_data: Video data
-            dataset_name: Name of the dataset
-
-        Returns:
-            Path to frames file following ProAssist structure: {data_path}/{dataset_name}/{frames_subdir}/{video_uid}.parquet
-        """
-        video_uid = video_data.get("video_uid", "unknown_video")
-
-        # Construct frames file path following ProAssist structure
-        # Format: {data_path}/{dataset_name}/{frames_subdir}/{video_uid}.arrow
-        frames_path = Path(
-            f"{self.data_path}/{dataset_name}/{self.frames_subdir}/{video_uid}.arrow"
-        )
-
-        return str(frames_path)
-
     def _calculate_overall_frame_range(
         self, conversation: List[Dict[str, Any]]
     ) -> Tuple[int, int]:
         """
-        Calculate overall frame range for the entire conversation
+        Calculate the overall frame range for entire conversation
 
         Args:
             conversation: List of conversation turns
 
         Returns:
-            Tuple of (start_frame, end_frame)
+            Tuple of (min_start_frame, max_end_frame)
         """
+        if not conversation:
+            return 0, 0
+
         start_frames = []
         end_frames = []
 
         for turn in conversation:
-            start_frame = turn.get("start_frame", 0)
-            end_frame = turn.get("end_frame", 0)
-            start_frames.append(start_frame)
-            end_frames.append(end_frame)
+            if "start_frame" in turn and "end_frame" in turn:
+                start_frames.append(turn["start_frame"])
+                end_frames.append(turn["end_frame"])
 
         if not start_frames:
             return 0, 0
 
         return min(start_frames), max(end_frames)
 
-    def validate_frame_availability(
-        self, video_data: Dict[str, Any], dataset_name: str
-    ) -> bool:
-        """
-        Ensure calculated frames exist within video bounds
 
-        Args:
-            video_data: Video data
-            dataset_name: Name of the dataset
 
-        Returns:
-            True if frames are within bounds
-        """
-        conversation = video_data.get("conversation", [])
-        if not conversation:
-            return True
-
-        # Try to get video duration or total frames
-        total_frames = self._get_total_frames(video_data)
-        if total_frames == 0:
-            self.logger.warning("Cannot determine total frames for validation")
-            return True
-
-        # Check each turn's frame range
-        for turn in conversation:
-            start_frame = turn.get("start_frame", 0)
-            end_frame = turn.get("end_frame", 0)
-
-            if start_frame < 0 or end_frame > total_frames:
-                self.logger.error(
-                    f"Frame range {start_frame}-{end_frame} exceeds "
-                    f"video bounds (0-{total_frames})"
-                )
-                return False
-
-        self.logger.debug("Frame availability validation passed")
-        return True
-
-    def _get_total_frames(self, video_data: Dict[str, Any]) -> int:
-        """
-        Get total number of frames in the video
-
-        Args:
-            video_data: Video data
-
-        Returns:
-            Total frame count, or 0 if unknown
-        """
-        # Try to get from existing metadata
-        if "metadata" in video_data and "total_frames" in video_data["metadata"]:
-            return video_data["metadata"]["total_frames"]
-
-        # Try to extract from video_uid or other fields
-        video_uid = video_data.get("video_uid", "")
-
-        # Look for frame count patterns in UID
-        if "_frames_" in video_uid:
-            try:
-                parts = video_uid.split("_frames_")
-                if len(parts) > 1:
-                    return int(parts[1])
-            except (ValueError, IndexError):
-                pass
-
-        # Default estimation based on conversation duration
-        conversation = video_data.get("conversation", [])
-        if conversation:
-            max_time = max(turn.get("time", 0) for turn in conversation)
-            estimated_frames = int(max_time * self.fps)
-            return estimated_frames
-
-        return 0
-
-    def get_frame_statistics(self, video_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Get statistics about frame usage in the conversation
-
-        Args:
-            video_data: Video data
-
-        Returns:
-            Dictionary with frame statistics
-        """
-        conversation = video_data.get("conversation", [])
-        if not conversation:
-            return {}
-
-        frame_ranges = self.calculate_event_frame_ranges(conversation)
-
-        # Calculate statistics
-        total_frames_used = sum(
-            end_frame - start_frame for start_frame, end_frame, _ in frame_ranges
-        )
-        unique_frames = len(
-            set(
-                frame
-                for start_frame, end_frame, _ in frame_ranges
-                for frame in range(start_frame, end_frame)
-            )
-        )
-        avg_frames_per_turn = (
-            total_frames_used / len(conversation) if conversation else 0
-        )
-
-        start_frame_idx, end_frame_idx = self._calculate_overall_frame_range(
-            conversation
-        )
-        coverage_percentage = (
-            unique_frames / max(1, end_frame_idx - start_frame_idx)
-        ) * 100
-
-        return {
-            "total_frames_used": total_frames_used,
-            "unique_frames": unique_frames,
-            "avg_frames_per_turn": avg_frames_per_turn,
-            "frame_coverage_percentage": coverage_percentage,
-            "start_frame_idx": start_frame_idx,
-            "end_frame_idx": end_frame_idx,
-            "total_turns": len(conversation),
-        }

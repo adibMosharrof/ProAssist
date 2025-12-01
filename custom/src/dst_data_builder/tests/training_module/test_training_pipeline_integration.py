@@ -242,14 +242,10 @@ def test_training_format_creation():
                 sample_data.copy(), dataset_name
             )
 
-            # Verify frames file path is constructed correctly
-            assert "frames_file" in frame_data, "Missing frames_file in video data"
-            expected_frames_path = f"data/{dataset_name}/frames/nusar-2021_action_both_9011-a01_9011_user_id_2021-02-01_153724__HMC_84355350_mono10bit.arrow"
-            actual_frames_path = frame_data["frames_file"]
-            assert (
-                actual_frames_path == expected_frames_path
-            ), f"Expected frames path '{expected_frames_path}', got '{actual_frames_path}'"
-            print(f"   ✅ Frames file path for {dataset_name}: {actual_frames_path}")
+            # Note: frames_file is NOT added here - it will be resolved from video_uid during training
+            # Verify video_uid is present for frame resolution
+            assert "video_uid" in frame_data, "Missing video_uid in video data"
+            print(f"   ✅ video_uid present for {dataset_name}: {frame_data['video_uid']}")
 
         # Use the last dataset's processed data for remaining tests
         frame_data = frame_integration.add_frame_metadata(
