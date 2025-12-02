@@ -1,80 +1,128 @@
-#!/bin/bash -l
+#!/bin/bash
 
-# --- SLURM Configuration Setup ---
+# DST Data Generator Runner - Dynamic for Local/SLURM environments
+# Automatically detects environment and adapts configuration
+
+# --- Environment Detection ---
+# Check if we're on a SLURM system
+if command -v sbatch &> /dev/null && [ -n "$SLURM_JOB_ID" ]; then
+    IS_SLURM=true
+    echo "🔍 Detected SLURM environment"
+else
+    IS_SLURM=false
+    echo "🔍 Detected local environment"
+fi
+
+# --- Configuration Setup ---
 setting="$1"
 interactive="i"
 
-# Determine SLURM partition and time based on interactive flag
-if [[ "$setting" == "$interactive" ]]; then
-    partition='gpuA40x4-interactive'
-    time='1:00:00'
-    num_gpus=1
+if [ "$IS_SLURM" = true ]; then
+    # SLURM Configuration
+    if [[ "$setting" == "$interactive" ]]; then
+        partition='gpuA40x4-interactive'
+        time='1:00:00'
+        num_gpus=1
+    else
+        partition='gpuA40x4'
+        time='2-00:00:00'
+        num_gpus=1
+    fi
+    memory=200g
+
+    # Delta cluster paths
+    PROJECT_ROOT=/scratch/bbyl/amosharrof/ProAssist
+    CONDA_ENV_PATH=/scratch/bbyl/amosharrof/ProAssist/.venv
+
+    # Setup SLURM output folders
+    d_folder=$(date +'%Y-%m-%d')
+    SLURM_FOLDER_BASE=slurm_out/dst_gen/
+    mkdir -p $SLURM_FOLDER_BASE/$d_folder
+    SLURM_FOLDER=$SLURM_FOLDER_BASE/$d_folder
 else
-    # Default to non-interactive A100 job (2 days limit)
-    partition='gpuA40x4'
-    time='2-00:00:00'
-    num_gpus=1
+    # Local machine configuration
+    PROJECT_ROOT=/u/siddique-d1/adib/ProAssist
+    CONDA_ENV_PATH=$PROJECT_ROOT/.venv
+
 fi
-memory=200g # Use consistent memory allocation
 
-# --- Project & Logging Setup ---
-# Set the project root path for the remote machine (Delta's /scratch storage)
-PROJECT_ROOT=/scratch/bbyl/amosharrof/ProAssist
-CONDA_ENV_PATH=/scratch/bbyl/amosharrof/ProAssist/.venv  # Path to your Conda env on Delta
+# --- Environment Setup ---
+setup_environment() {
+    # Source bash profile if it exists
+    if [ -f ~/.bash_profile ]; then
+        source ~/.bash_profile
+        echo "Sourced: ~/.bash_profile"
+    fi
+    if [ -f ~/.bashrc ]; then
+        source ~/.bashrc
+        echo "Sourced: ~/.bashrc"
+    fi
 
-# Setup SLURM output folders
-d_folder=$(date +'%Y-%m-%d')
-SLURM_FOLDER_BASE=slurm_out/dst_gen/
-mkdir -p $SLURM_FOLDER_BASE/$d_folder
-SLURM_FOLDER=$SLURM_FOLDER_BASE/$d_folder
+    # Handle HOME change for conda (if needed)
+    if [ -f ~/.bash_profile ]; then
+        cd ~ && source ~/.bash_profile > /dev/null 2>&1
+        echo "Sourced (after HOME change): ~/.bash_profile"
+    fi
 
+    # Change to project root
+    cd "$PROJECT_ROOT"
+    echo "📁 Current working directory: $(pwd)"
 
+    # Set PYTHONPATH
+    export PYTHONPATH="$PROJECT_ROOT/custom/src:/mounts/u-amo-d1/adibm-data/projects/ZSToD/src:${PYTHONPATH:-}"
+    echo "📦 PYTHONPATH: $PYTHONPATH"
+}
 
-# --- SBATCH Submission Block ---
-sbatch <<EOT
+# --- Execution ---
+run_generator() {
+    echo "╔══════════════════════════════════════════════╗"
+    echo "║   DST Data Generator${IS_SLURM:+ (SLURM)}   ║"
+    echo "╚══════════════════════════════════════════════╝"
+    echo "🐍 Using Python: $(which python)"
+    echo "📦 PYTHONPATH: $PYTHONPATH"
+    echo "📂 Running from: $(pwd)"
+    echo ""
+
+    # Run the generator module
+    python -m dst_data_builder.simple_dst_generator
+
+    echo ""
+    echo "✅ DST data generation completed successfully!"
+}
+
+# --- Main Logic ---
+if [ "$IS_SLURM" = true ]; then
+    # Submit SLURM job
+    echo "🚀 Submitting SLURM job..."
+    sbatch <<EOT
 #!/bin/bash
 #SBATCH --mem=$memory
-#SBATCH --time=$time             # Time limit for the job (REQUIRED).
-#SBATCH --job-name=dst_generate  # Job name based on the task
+#SBATCH --time=$time
+#SBATCH --job-name=dst_generate
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1      # Number of cores for the job
-#SBATCH -e $SLURM_FOLDER/%j.err  # Error file for this job.
-#SBATCH -o $SLURM_FOLDER/%j.out  # Output file for this job.
-#SBATCH -A bbyl-delta-gpu        # Project allocation account name (REQUIRED)
-#SBATCH --partition=$partition   # Partition/queue to run the job in. (REQUIRED)
+#SBATCH --ntasks-per-node=1
+#SBATCH -e $SLURM_FOLDER/%j.err
+#SBATCH -o $SLURM_FOLDER/%j.out
+#SBATCH -A bbyl-delta-gpu
+#SBATCH --partition=$partition
 #SBATCH --gpus-per-node=$num_gpus
-#SBATCH --constraint='scratch'   # Ensure access to /scratch storage
+#SBATCH --constraint='scratch'
 
-# --- Environment Setup on Compute Node ---
-
-# 1. Source Conda environment
+# Environment setup on compute node
 source /sw/external/python/anaconda3_gpu/etc/profile.d/conda.sh
 conda activate $CONDA_ENV_PATH
 
-# 2. Change to project root on scratch storage
-cd "$PROJECT_ROOT"
+$(declare -f setup_environment)
+setup_environment
 
-# 3. Set PYTHONPATH for the project code
-# NOTE: The custom/src path is now relative to the remote PROJECT_ROOT
-export PYTHONPATH="$PROJECT_ROOT/custom/src:${PYTHONPATH:-}"
-
-echo "╔══════════════════════════════════════════════╗"
-echo "║   DST Data Generator on Compute Node     ║"
-echo "╚══════════════════════════════════════════════╝"
-echo "🐍 Using Python: \$(which python)"
-echo "📦 PYTHONPATH: \$PYTHONPATH"
-echo "📂 Running from: \$(pwd)"
-echo ""
-
-# --- Execution ---
-
-# Run the generator module
-# Note: The local script used a variable for the python path,
-# but using the activated 'python' and '-m' is cleaner on SLURM.
-python -m dst_data_builder.simple_dst_generator 
-
-echo ""
-echo "✅ DST data generation completed successfully on SLURM!"
+$(declare -f run_generator)
+run_generator
 
 exit 0
 EOT
+else
+    # Run locally
+    echo "🚀 Running locally..."
+    setup_environment
+    run_generator
+fi

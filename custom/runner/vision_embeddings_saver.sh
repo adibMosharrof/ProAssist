@@ -1,72 +1,127 @@
 #!/bin/bash
 
 #######################################################
-# Vision Embeddings Saver Runner
+# Vision Embeddings Saver Runner - Dynamic for Local/SLURM environments
 # Extracts and saves vision embeddings from SmolVLM2
 # for DST training data preprocessing
 #######################################################
 
 set -e
 
+# --- Environment Detection ---
+# Check if we're on a SLURM system
+if command -v sbatch &> /dev/null && [ -n "$SLURM_JOB_ID" ]; then
+    IS_SLURM=true
+    echo "🔍 Detected SLURM environment"
+else
+    IS_SLURM=false
+    echo "🔍 Detected local environment"
+fi
+
 # Print header
 echo "╔══════════════════════════════════════════════╗"
-echo "║   Vision Embeddings Saver Runner ║"
+echo "║   Vision Embeddings Saver Runner${IS_SLURM:+ (SLURM)} ║"
 echo "╚══════════════════════════════════════════════╝"
 echo ""
 
-# Source environment
-if [ -f ~/.bash_profile ]; then
-    source ~/.bash_profile
-    echo "Sourced: ~/.bash_profile"
-fi
-if [ -f ~/.bashrc ]; then
-    source ~/.bashrc
-    echo "Sourced: ~/.bashrc"
+# --- Configuration Setup ---
+if [ "$IS_SLURM" = true ]; then
+    # SLURM Configuration
+    partition='gpuA40x4'
+    time='2-00:00:00'
+    memory=200g
+    num_gpus=1
+
+    # Delta cluster paths
+    PROJECT_ROOT=/scratch/bbyl/amosharrof/ProAssist
+    CONDA_ENV_PATH=/scratch/bbyl/amosharrof/ProAssist/.venv
+
+    # Setup SLURM output folders
+    d_folder=$(date +'%Y-%m-%d')
+    SLURM_FOLDER_BASE=slurm_out/vision_embeddings/
+    mkdir -p $SLURM_FOLDER_BASE/$d_folder
+    SLURM_FOLDER=$SLURM_FOLDER_BASE/$d_folder
+else
+    # Local machine configuration
+    PROJECT_ROOT=/u/siddique-d1/adib/ProAssist
+    CONDA_ENV_PATH=$PROJECT_ROOT/.venv
+
+    echo "📁 Local project root: $PROJECT_ROOT"
+    echo "🐍 Conda env path: $CONDA_ENV_PATH"
 fi
 
-# Handle HOME change for conda (if needed)
-if [ -f ~/.bash_profile ]; then
-    cd ~ && source ~/.bash_profile > /dev/null 2>&1
-    echo "Sourced (after HOME change): ~/.bash_profile"
-fi
-
-# Get project root - run from /u/siddique-d1/adib/ProAssist
-PROJECT_ROOT="/u/siddique-d1/adib/ProAssist"
-if [ ! -d "$PROJECT_ROOT" ]; then
-    PROJECT_ROOT="$(pwd)"
-fi
-echo "📁 Project root directory: $PROJECT_ROOT"
-
-# Change to project root
-cd "$PROJECT_ROOT"
-echo "📁 Current working directory: $(pwd)"
-
-# Look for venv
-PYTHON_CMD="python3"
-if [ -d "$PROJECT_ROOT/.venv" ]; then
-    echo "🔧 Found virtual environment at $PROJECT_ROOT/.venv"
-    VENV_PYTHON="$PROJECT_ROOT/.venv/bin/python"
-    if [ -f "$VENV_PYTHON" ]; then
-        PYTHON_CMD="$VENV_PYTHON"
-        echo "✓ Using Python from venv: $VENV_PYTHON"
-    else
-        echo "⚠️  Python not found in venv at $VENV_PYTHON, falling back to system python3"
+# --- Environment Setup ---
+setup_environment() {
+    # Source environment
+    if [ -f ~/.bash_profile ]; then
+        source ~/.bash_profile
+        echo "Sourced: ~/.bash_profile"
     fi
+    if [ -f ~/.bashrc ]; then
+        source ~/.bashrc
+        echo "Sourced: ~/.bashrc"
+    fi
+
+    # Handle HOME change for conda (if needed)
+    if [ -f ~/.bash_profile ]; then
+        cd ~ && source ~/.bash_profile > /dev/null 2>&1
+        echo "Sourced (after HOME change): ~/.bash_profile"
+    fi
+
+    # Change to project root
+    cd "$PROJECT_ROOT"
+    echo "📁 Current working directory: $(pwd)"
+
+    # Set PYTHONPATH
+    export PYTHONPATH="$PROJECT_ROOT/custom/src:/mounts/u-amo-d1/adibm-data/projects/ZSToD/src:${PYTHONPATH:-}"
+    echo "📦 PYTHONPATH: $PYTHONPATH"
+}
+
+# --- Execution ---
+run_embeddings_saver() {
+    echo ""
+    echo "🚀 Starting Vision Embeddings Extraction (Hydra-controlled)..."
+    echo "📂 Running from: $(pwd)"
+    echo "🐍 Python module: dst_data_builder.vision_embeddings_saver"
+    echo ""
+
+    # Run the embeddings saver
+    python -m dst_data_builder.vision_embeddings_saver
+
+    echo ""
+    echo "✅ Vision embeddings extraction completed successfully!"
+}
+
+# --- Main Logic ---
+if [ "$IS_SLURM" = true ]; then
+    # Submit SLURM job
+    echo "🚀 Submitting SLURM job..."
+    sbatch <<EOT
+#!/bin/bash
+#SBATCH --mem=$memory
+#SBATCH --time=$time
+#SBATCH --job-name=vision_embeddings
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH -e $SLURM_FOLDER/%j.err
+#SBATCH -o $SLURM_FOLDER/%j.out
+#SBATCH -A bbyl-delta-gpu
+#SBATCH --partition=$partition
+#SBATCH --gpus-per-node=$num_gpus
+#SBATCH --constraint='scratch'
+
+# Environment setup on compute node
+$(declare -f setup_environment)
+setup_environment
+
+$(declare -f run_embeddings_saver)
+run_embeddings_saver
+
+exit 0
+EOT
+else
+    # Run locally
+    echo "🚀 Running locally..."
+    setup_environment
+    run_embeddings_saver
 fi
-
-# Set PYTHONPATH
-export PYTHONPATH="$PROJECT_ROOT/custom/src:/mounts/u-amo-d1/adibm-data/projects/ZSToD/src:${PYTHONPATH:-}"
-
-
-echo "🚀 Starting Vision Embeddings Extraction (Hydra-controlled)..."
-echo "📂 Running from: $(pwd)"
-echo "🐍 Python command: $PYTHON_CMD"
-echo "🐍 Python module: dst_data_builder.vision_embeddings_runner"
-echo ""
-
-# Run the embeddings saver
-cd "$PROJECT_ROOT"
-
-$PYTHON_CMD -m dst_data_builder.vision_embeddings_saver
-echo ""
-echo "✅ Vision embeddings extraction completed successfully!"
