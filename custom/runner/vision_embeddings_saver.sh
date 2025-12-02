@@ -45,9 +45,9 @@ interactive="i"
 if [ "$IS_SLURM" = true ]; then
     # SLURM Configuration
     if [[ "$setting" == "$interactive" ]]; then
-        partition='gpuA100x4-interactive'
+        partition='gpuA40x4-interactive'
         time='1:00:00'
-        num_gpus=1
+        num_gpus=2
     else
         partition='gpuA100x4'
         time='2-00:00:00'
