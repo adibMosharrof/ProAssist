@@ -9,13 +9,27 @@
 set -e
 
 # --- Environment Detection ---
-# Check if we're on a SLURM system
-if command -v sbatch &> /dev/null && [ -n "$SLURM_JOB_ID" ]; then
+
+# Check 1: Are we running as a SLURM job (on a compute node)?
+# This check is necessary because the script runs itself on the compute node 
+# after submission and must distinguish the execution phase from the submission phase.
+if [ -n "$SLURM_JOB_ID" ]; then
+    ENVIRONMENT="SLURM_EXECUTE"
     IS_SLURM=true
-    echo "🔍 Detected SLURM environment"
+    echo -e "🔍 ${GREEN}Detected COMPUTE NODE (Job ID: $SLURM_JOB_ID)${NC}"
+
+# Check 2: Can we submit a SLURM job? This is the simplified check for the Login Node.
+# We consolidate the checks (sbatch exists is enough to confirm cluster context).
+elif command -v sbatch &> /dev/null; then
+    ENVIRONMENT="SLURM_SUBMIT"
+    IS_SLURM=true
+    echo -e "🔍 ${BLUE}Detected CLUSTER LOGIN NODE (Ready for submission)${NC}"
+
 else
+    # Default case: Running on a local/unrelated development machine.
+    ENVIRONMENT="LOCAL_RUN"
     IS_SLURM=false
-    echo "🔍 Detected local environment"
+    echo -e "🔍 ${YELLOW}Detected LOCAL DEVELOPMENT ENVIRONMENT${NC}"
 fi
 
 # Colors for output
@@ -26,7 +40,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 echo -e "${BLUE}╔══════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║   DST Training Runner (SmolVLM2)${IS_SLURM:+ (SLURM)}   ║${NC}"
+echo -e "${BLUE}║   DST Training Runner (SmolVLM2)${IS_SLURM:+ (SLURM)}    ║${NC}"
 echo -e "${BLUE}╚══════════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -46,8 +60,8 @@ fi
 
 interactive="i"
 
-if [ "$IS_SLURM" = true ]; then
-    # SLURM Configuration
+if [ "$ENVIRONMENT" != "LOCAL_RUN" ]; then
+    # SLURM Configuration (applies to both SUBMIT and EXECUTE phases)
     if [[ "$setting" == "$interactive" ]]; then
         partition='gpuA100x4-interactive'
         time='1:00:00'
@@ -59,20 +73,16 @@ if [ "$IS_SLURM" = true ]; then
     fi
     memory=200g
 
+    # Assuming scratch is the high-performance file system on the cluster
     PROJECT_ROOT="${OVERRIDE_PROJECT_ROOT:-/scratch/bbyl/amosharrof/ProAssist}"
     CONDA_ENV_PATH=/scratch/bbyl/amosharrof/ProAssist/.venv
 
-    # Setup SLURM output folders
+    # Setup SLURM output folders (This is done once, during submission)
     d_folder=$(date +'%Y-%m-%d')
     SLURM_FOLDER_BASE=slurm_out/training/
     mkdir -p $SLURM_FOLDER_BASE/$d_folder
     SLURM_FOLDER=$SLURM_FOLDER_BASE/$d_folder
-
-    # Setup SLURM output folders
-    d_folder=$(date +'%Y-%m-%d')
-    SLURM_FOLDER_BASE=slurm_out/training/
-    mkdir -p $SLURM_FOLDER_BASE/$d_folder
-    SLURM_FOLDER=$SLURM_FOLDER_BASE/$d_folder
+    
 else
     # Local machine configuration - use override if provided, otherwise explicit project root
     PROJECT_ROOT="${OVERRIDE_PROJECT_ROOT:-/u/siddique-d1/adib/ProAssist}"
@@ -95,20 +105,29 @@ setup_environment() {
     fi
 
     # Handle HOME change for conda (if needed)
+    # The 'cd ~' here is generally unnecessary and can be removed, 
+    # but kept for safety if you need it to load profile variables correctly.
     if [ -f ~/.bash_profile ]; then
         cd ~ && source ~/.bash_profile > /dev/null 2>&1
         echo -e "${GREEN}✓ Sourced (after HOME change): ~/.bash_profile${NC}"
     fi
 
     # Set HuggingFace cache to avoid disk space issues
-    export HF_HOME="${HOME}/.cache/huggingface"
+    # Use $HOME if running on compute node, otherwise rely on the default if local/dev
+    export HF_HOME="${HOME:-$PROJECT_ROOT}/.cache/huggingface"
     mkdir -p "${HF_HOME}"
     echo -e "${GREEN}📦 HF_HOME: ${HF_HOME}${NC}"
 
     # GPU configuration
-    if [ "$IS_SLURM" = true ]; then
-        export CUDA_VISIBLE_DEVICES="0,1"
-        echo -e "${GREEN}📦 CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}${NC}"
+    if [ "$ENVIRONMENT" == "SLURM_EXECUTE" ]; then
+        # On compute nodes, SLURM sets $SLURM_GPUS_ON_NODE.
+        # We manually set CUDA_VISIBLE_DEVICES for PyTorch/Accelerate to the right GPUs
+        # NOTE: Using all allocated GPUs (0 through $num_gpus-1)
+        if [ "$num_gpus" -gt 0 ]; then
+            GPU_INDICES=$(seq -s, 0 $((num_gpus - 1)))
+            export CUDA_VISIBLE_DEVICES="$GPU_INDICES"
+            echo -e "${GREEN}📦 CUDA_VISIBLE_DEVICES set to $GPU_INDICES (from sbatch config)${NC}"
+        fi
     fi
 
     # Check API keys
@@ -160,9 +179,14 @@ run_training() {
 }
 
 # --- Main Logic ---
-if [ "$IS_SLURM" = true ]; then
-    # Submit SLURM job
+
+if [ "$ENVIRONMENT" == "SLURM_SUBMIT" ]; then
+    # Submit SLURM job (Runs on Login Node)
     echo -e "${BLUE}🚀 Submitting SLURM job...${NC}"
+    
+    # Preserve original arguments passed to the script for the job script
+    ORIGINAL_ARGS="$@"
+
     sbatch <<EOT
 #!/bin/bash
 #SBATCH --mem=$memory
@@ -177,18 +201,34 @@ if [ "$IS_SLURM" = true ]; then
 #SBATCH --gpus-per-node=$num_gpus
 #SBATCH --constraint='scratch'
 
-# Environment setup on compute node
+# Environment detection will run again on the compute node, which 
+# will then correctly trigger the SLURM_EXECUTE path below.
+
+# Load environment setup functions onto the compute node
 $(declare -f setup_environment)
 setup_environment
 
+# Load training execution function onto the compute node
 $(declare -f run_training)
-run_training "\$@"
+# Execute the training function with the original arguments
+run_training "$ORIGINAL_ARGS"
 
 exit 0
 EOT
-else
-    # Run locally
-    echo -e "${BLUE}🚀 Running locally...${NC}"
+
+elif [ "$ENVIRONMENT" == "SLURM_EXECUTE" ]; then
+    # Run on Compute Node (This is the execution path inside the submitted job)
+    echo -e "${GREEN}Starting Compute Node tasks...${NC}"
+    
+    # Environment setup is called again inside the job script template
+    # by the Sbatch wrapper, so it's ready.
+    
+    # Run training with arguments passed from the sbatch wrapper
+    run_training "$@"
+
+else # LOCAL_RUN
+    # Run locally (for quick debugging/setup)
+    echo -e "${YELLOW}Running locally...${NC}"
 
     if [ -n "$OVERRIDE_PROJECT_ROOT" ]; then
         echo -e "${YELLOW}🔧 Using project root override: $OVERRIDE_PROJECT_ROOT${NC}"
@@ -197,3 +237,5 @@ else
     setup_environment
     run_training "$@"
 fi
+
+echo "Script finished on $ENVIRONMENT."

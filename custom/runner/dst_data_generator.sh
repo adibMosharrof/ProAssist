@@ -4,13 +4,27 @@
 # Automatically detects environment and adapts configuration
 
 # --- Environment Detection ---
-# Check if we're on a SLURM system
-if command -v sbatch &> /dev/null && [ -n "$SLURM_JOB_ID" ]; then
+
+# Check 1: Are we running as a SLURM job (on a compute node)?
+# This check is necessary because the script runs itself on the compute node 
+# after submission and must distinguish the execution phase from the submission phase.
+if [ -n "$SLURM_JOB_ID" ]; then
+    ENVIRONMENT="SLURM_EXECUTE"
     IS_SLURM=true
-    echo "🔍 Detected SLURM environment"
+    echo "🔍 Detected COMPUTE NODE (Job ID: $SLURM_JOB_ID)"
+
+# Check 2: Can we submit a SLURM job? This is the simplified check for the Login Node.
+# We consolidate the checks (sbatch exists is enough to confirm cluster context).
+elif command -v sbatch &> /dev/null; then
+    ENVIRONMENT="SLURM_SUBMIT"
+    IS_SLURM=true
+    echo "🔍 Detected CLUSTER LOGIN NODE (Ready for submission)"
+
 else
+    # Default case: Running on a local/unrelated development machine.
+    ENVIRONMENT="LOCAL_RUN"
     IS_SLURM=false
-    echo "🔍 Detected local environment"
+    echo "🔍 Detected LOCAL DEVELOPMENT ENVIRONMENT"
 fi
 
 # --- Configuration Setup ---
