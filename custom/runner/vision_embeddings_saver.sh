@@ -134,6 +134,14 @@ if [ "$IS_SLURM" = true ]; then
 #SBATCH --constraint='scratch'
 
 # Environment setup on compute node
+# Activate the virtual environment
+if [ -f "$CONDA_ENV_PATH/bin/activate" ]; then
+    source "$CONDA_ENV_PATH/bin/activate"
+    echo "Activated virtual environment: $CONDA_ENV_PATH"
+else
+    echo "Warning: Could not find virtual environment at $CONDA_ENV_PATH"
+fi
+
 $(declare -f setup_environment)
 setup_environment
 
