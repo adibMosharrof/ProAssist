@@ -15,9 +15,15 @@ processing:
 
 # Dataset settings
 dataset:
-  output_dir: "${project_root}/custom/outputs/dst_generated/hybrid_dst/2025-11-30/00-56-27_gpt-4o_proassist_10rows"
+  output_dir: custom/outputs/dst_generated/hybrid_dst/2025-11-29/05-44-14_gpt-4o_proassist_50rows
   names: ["assembly101"]
 
+exp_name: proassist_test
 # Logging
 logging:
-  level: "INFO"
+  level: INFO
+
+# Hydra settings
+hydra:
+  run:
+    dir: custom/outputs/dst_generated/vision_embeddings/${now:%Y-%m-%d}/${now:%H-%M-%S}_${exp_name}

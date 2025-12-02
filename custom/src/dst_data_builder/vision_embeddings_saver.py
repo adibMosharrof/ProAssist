@@ -36,6 +36,7 @@ def save_embeddings_for_dataset(
     clips: List[Dict[str, Any]],
     dataset_name: str,
     output_dir: Path,
+    saver: "VisionEmbeddingsSaver",
 ) -> Dict[str, Any]:
     """
     Extract and save vision embeddings for all clips in a dataset.
@@ -44,6 +45,7 @@ def save_embeddings_for_dataset(
         clips: List of clip data from DST JSON
         dataset_name: Name of dataset (e.g., "assembly101")
         output_dir: Directory to save embeddings
+        saver: VisionEmbeddingsSaver instance to use
     
     Returns:
         Summary statistics
@@ -55,9 +57,6 @@ def save_embeddings_for_dataset(
     output_dir.mkdir(parents=True, exist_ok=True)
     
     logger.info(f"Processing {len(clips)} clips...")
-    
-    # Create saver with config
-    saver = VisionEmbeddingsSaver(cfg)
     
     results = []
     
@@ -419,6 +418,9 @@ def save_vision_embeddings(cfg: DictConfig) -> Dict[str, Any]:
         "datasets": {},
     }
     
+    # Create saver instance
+    saver = VisionEmbeddingsSaver(cfg)
+    
     # Process each dataset
     for dataset_name in dataset_names:
         dataset_json_dir = dataset_output_dir / dataset_name
@@ -472,6 +474,7 @@ def save_vision_embeddings(cfg: DictConfig) -> Dict[str, Any]:
                 clips_chunk,
                 dataset_name,
                 frames_dir,
+                saver,
             )
             
             dataset_summary["splits"][split_name] = result
@@ -483,7 +486,7 @@ def save_vision_embeddings(cfg: DictConfig) -> Dict[str, Any]:
 
 @hydra.main(
     version_base=None,
-    config_path="../../../config/dst_data_generator",
+    config_path="../../../custom/config/dst_data_generator",
     config_name="vision_embeddings",
 )
 def main(cfg: DictConfig) -> None:
