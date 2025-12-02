@@ -205,7 +205,7 @@ class VisionEmbeddingsSaver:
             # Result shape: [batch_size, 2048]
             cls_tokens = image_hidden_states[:, 0, 0, :]  # [batch_size, 2048]
         
-        return cls_tokens.cpu().float()
+        return cls_tokens.cpu().half()  # Return as float16 to save 50% disk space
 
     
     def load_frames_from_arrow(
@@ -374,8 +374,9 @@ class VisionEmbeddingsSaver:
         # Stack all [CLS] tokens [num_frames, 2048]
         cls_tokens = torch.cat(all_cls_tokens, dim=0)
         
-        # Convert to numpy
-        embeddings = cls_tokens.numpy()
+        # Convert to numpy as float16 to save 50% disk space
+        # Training will convert back to float32 automatically
+        embeddings = cls_tokens.numpy().astype(np.float16)
         
         # Save embeddings using the unique ID as filename
         output_file = output_dir / f"{clip_id}_embeddings.pkl"
