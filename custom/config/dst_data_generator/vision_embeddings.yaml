@@ -1,0 +1,23 @@
+# Vision Embeddings Saver Configuration
+# Configuration for extracting and saving vision embeddings from SmolVLM2
+
+# Project settings
+project_root: "/u/siddique-d1/adib/ProAssist"
+
+# Vision model settings
+model:
+  name: "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
+
+# Processing settings
+processing:
+  batch_size: 30  # Number of frames to process in parallel
+  frames_root: "${project_root}/data/proassist/processed_data"  # Root path for arrow files with raw frames
+
+# Dataset settings
+dataset:
+  output_dir: "${project_root}/custom/outputs/dst_generated/hybrid_dst/2025-11-30/00-56-27_gpt-4o_proassist_10rows"
+  names: ["assembly101"]
+
+# Logging
+logging:
+  level: "INFO"

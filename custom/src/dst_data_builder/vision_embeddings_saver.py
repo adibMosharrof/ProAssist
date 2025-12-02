@@ -15,15 +15,19 @@ import pickle
 import base64
 import io
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import numpy as np
+from omegaconf import DictConfig, OmegaConf
+import os
+import sys
+import hydra
+from hydra.core.hydra_config import HydraConfig
 
 import torch
 from transformers import AutoModel, AutoProcessor
 from PIL import Image
 import datasets as hf_datasets
 from tqdm import tqdm
-import os
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +56,8 @@ def save_embeddings_for_dataset(
     
     logger.info(f"Processing {len(clips)} clips...")
     
-    # Create saver
-    saver = VisionEmbeddingsSaver()
+    # Create saver with config
+    saver = VisionEmbeddingsSaver(cfg)
     
     results = []
     
@@ -86,38 +90,28 @@ class VisionEmbeddingsSaver:
     - Save to disk for efficient training
     """
     
-    def __init__(
-        self,
-        model_name: str = "HuggingFaceTB/SmolVLM2-2.2B-Instruct",
-        frames_root: str = "data/proassist/processed_data",
-        batch_size: int = 30,
-        device: str = None,
-    ):
+    def __init__(self, cfg: DictConfig):
         """
         Initialize vision embeddings saver.
         
         Args:
-            model_name: HuggingFace model ID for vision encoder
-            frames_root: Root path containing arrow files with frames
-            batch_size: Number of frames to process in parallel (default: 15)
-            device: Device to use (e.g., 'cuda:0'). If None, auto-detects from LOCAL_RANK or uses cuda:0
+            cfg: Hydra configuration object
         """
-        self.model_name = model_name
-        self.frames_root = Path(frames_root)
-        self.batch_size = batch_size
+        self.model_name = cfg.model.name
+        self.frames_root = Path(cfg.processing.frames_root)
+        self.batch_size = cfg.processing.batch_size
+        self.device = getattr(cfg.model, 'device', None)
         self.vision_hidden_size = 1152  # SmolVLM2 vision encoder output dim
         
         # Determine device - use LOCAL_RANK if available (for multi-GPU), else cuda:0
-        if device is not None:
-            self.device = device
-        else:
+        if self.device is None:
             local_rank = int(os.environ.get("LOCAL_RANK", 0))
             self.device = f"cuda:{local_rank}"
         
         # Load vision encoder
         self._load_vision_encoder()
         
-        logger.info(f"✓ Initialized VisionEmbeddingsSaver on {self.device} with batch_size={batch_size}")
+        logger.info(f"✓ Initialized VisionEmbeddingsSaver on {self.device} with batch_size={self.batch_size}")
     
     def _load_vision_encoder(self):
         """Load SmolVLM2 vision encoder."""
@@ -393,21 +387,14 @@ class VisionEmbeddingsSaver:
         }
 
 
-def save_vision_embeddings(
-    dataset_output_dir: Path,
-    dataset_names: list = ["assembly101"],
-    frames_root: str = "data/proassist/processed_data",
-) -> Dict[str, Any]:
+def save_vision_embeddings(cfg: DictConfig) -> Dict[str, Any]:
     """
     Main function to save vision embeddings for all splits in datasets.
     
     Creates a "frames" subdirectory with vision feature files for each dataset.
     
     Args:
-        dataset_output_dir: Path to parent directory containing dataset subdirectories
-                          (e.g., custom/outputs/dst_generated/hybrid_dst/.../2025-11-29/02-42-14_gpt-4o_proassist_50rows/)
-        dataset_names: List of dataset names to process (e.g., ["assembly101"])
-        frames_root: Root path for arrow files with raw frames
+        cfg: Hydra configuration object
     
     Returns:
         Summary of embedding extraction for all datasets
@@ -416,6 +403,9 @@ def save_vision_embeddings(
         FileNotFoundError: If expected files don't exist
         ValueError: If embedding extraction fails for any clip
     """
+    dataset_output_dir = Path(cfg.dataset.output_dir)
+    dataset_names = cfg.dataset.names
+    frames_root = cfg.processing.frames_root
     # Get process info from environment (set by torchrun)
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     world_size = int(os.environ.get("WORLD_SIZE", 1))
@@ -491,35 +481,40 @@ def save_vision_embeddings(
     return summary
 
 
-if __name__ == "__main__":
-    import sys
-    
-    # Example usage
-    logging.basicConfig(level=logging.INFO)
-    
-    dataset_output_dir = Path(
-        # "custom/outputs/dst_generated/hybrid_dst/2025-11-29/"
-        # "02-42-14_gpt-4o_proassist_50rows/"
-        # "custom/outputs/dst_generated/hybrid_dst/2025-11-29/05-58-29_gpt-4o_proassist_50rows"
-        "custom/outputs/dst_generated/hybrid_dst/2025-11-30/00-56-27_gpt-4o_proassist_10rows"
+@hydra.main(
+    version_base=None,
+    config_path="../../../config/dst_data_generator",
+    config_name="vision_embeddings",
+)
+def main(cfg: DictConfig) -> None:
+    """Main function to run vision embeddings extraction."""
+    # Set up logging
+    logging.basicConfig(
+        level=getattr(logging, cfg.logging.level),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
-    dataset_names = ["assembly101"]
-    
-    if len(sys.argv) > 1:
-        dataset_output_dir = Path(sys.argv[1])
-    
-    if len(sys.argv) > 2:
-        dataset_names = sys.argv[2].split(",")
-    
-    summary = save_vision_embeddings(dataset_output_dir, dataset_names)
-    
-    # Save summary to process-specific file
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    summary_file = dataset_output_dir / f"vision_embeddings_summary_rank{local_rank}.json"
-    with open(summary_file, "w") as f:
-        json.dump(summary, f, indent=2, default=str)
-    
-    print("\n" + "="*70)
-    print("✓ Vision Embeddings Extraction Complete")
-    print("="*70)
-    print(f"Summary saved to: {summary_file}")
+    logger = logging.getLogger(__name__)
+
+    # Log configuration
+    logger.info("Starting Vision Embeddings Extraction")
+    logger.info(f"Project root: {cfg.project_root}")
+    logger.info(f"Dataset output dir: {cfg.dataset.output_dir}")
+    logger.info(f"Datasets: {cfg.dataset.names}")
+    logger.info(f"Model: {cfg.model.name}")
+    logger.info(f"Batch size: {cfg.processing.batch_size}")
+    logger.info(f"Frames root: {cfg.processing.frames_root}")
+
+    # Run the embeddings extraction
+    try:
+        summary = save_vision_embeddings(cfg)
+
+        logger.info("Vision embeddings extraction completed successfully!")
+        logger.info(f"Summary: {summary}")
+
+    except Exception as e:
+        logger.error(f"Vision embeddings extraction failed: {e}")
+        raise
+
+
+if __name__ == "__main__":
+    main()
