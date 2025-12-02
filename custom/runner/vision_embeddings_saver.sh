@@ -25,12 +25,21 @@ echo "╚═══════════════════════�
 echo ""
 
 # --- Configuration Setup ---
+setting="$1"
+interactive="i"
+
 if [ "$IS_SLURM" = true ]; then
     # SLURM Configuration
-    partition='gpuA40x4'
-    time='2-00:00:00'
+    if [[ "$setting" == "$interactive" ]]; then
+        partition='gpuA100x4-interactive'
+        time='1:00:00'
+        num_gpus=1
+    else
+        partition='gpuA100x4'
+        time='2-00:00:00'
+        num_gpus=4
+    fi
     memory=200g
-    num_gpus=1
 
     # Delta cluster paths
     PROJECT_ROOT=/scratch/bbyl/amosharrof/ProAssist

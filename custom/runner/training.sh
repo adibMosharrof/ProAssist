@@ -31,22 +31,42 @@ echo -e "${BLUE}╚════════════════════�
 echo ""
 
 # --- Configuration Setup ---
-# Allow overriding project root via command line argument
+# Parse arguments: first argument can be project root override or "i" for interactive
+OVERRIDE_PROJECT_ROOT=""
+setting=""
+
 if [ $# -gt 0 ]; then
-    OVERRIDE_PROJECT_ROOT="$1"
-    shift  # Remove the first argument so remaining args go to training
+    if [[ "$1" == "i" ]]; then
+        setting="$1"
+    else
+        OVERRIDE_PROJECT_ROOT="$1"
+    fi
+    shift
 fi
 
-if [ "$IS_SLURM" = true ]; then
-    # SLURM Configuration - use override if provided, otherwise default
-    PROJECT_ROOT="${OVERRIDE_PROJECT_ROOT:-/scratch/bbyl/amosharrof/ProAssist}"
-    partition='gpuA40x4'
-    time='2-00:00:00'
-    memory=200g
-    num_gpus=2
+interactive="i"
 
-    # Delta cluster paths
+if [ "$IS_SLURM" = true ]; then
+    # SLURM Configuration
+    if [[ "$setting" == "$interactive" ]]; then
+        partition='gpuA100x4-interactive'
+        time='1:00:00'
+        num_gpus=1
+    else
+        partition='gpuA100x4'
+        time='2-00:00:00'
+        num_gpus=4
+    fi
+    memory=200g
+
+    PROJECT_ROOT="${OVERRIDE_PROJECT_ROOT:-/scratch/bbyl/amosharrof/ProAssist}"
     CONDA_ENV_PATH=/scratch/bbyl/amosharrof/ProAssist/.venv
+
+    # Setup SLURM output folders
+    d_folder=$(date +'%Y-%m-%d')
+    SLURM_FOLDER_BASE=slurm_out/training/
+    mkdir -p $SLURM_FOLDER_BASE/$d_folder
+    SLURM_FOLDER=$SLURM_FOLDER_BASE/$d_folder
 
     # Setup SLURM output folders
     d_folder=$(date +'%Y-%m-%d')
@@ -159,13 +179,6 @@ if [ "$IS_SLURM" = true ]; then
 
 # Environment setup on compute node
 $(declare -f setup_environment)
-
-# Parse optional project root override (first argument)
-if [ \$# -gt 0 ]; then
-    PROJECT_ROOT="\$1"
-    shift  # Remove the first argument so remaining args go to training
-fi
-
 setup_environment
 
 $(declare -f run_training)
@@ -177,11 +190,8 @@ else
     # Run locally
     echo -e "${BLUE}🚀 Running locally...${NC}"
 
-    # Parse optional project root override (first argument)
-    if [ $# -gt 0 ]; then
-        PROJECT_ROOT="$1"
-        shift  # Remove the first argument so remaining args go to training
-        echo -e "${YELLOW}🔧 Using project root override: $PROJECT_ROOT${NC}"
+    if [ -n "$OVERRIDE_PROJECT_ROOT" ]; then
+        echo -e "${YELLOW}🔧 Using project root override: $OVERRIDE_PROJECT_ROOT${NC}"
     fi
 
     setup_environment
