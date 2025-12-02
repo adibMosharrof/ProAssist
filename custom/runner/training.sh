@@ -52,7 +52,7 @@ if [ -n "$OPENAI_API_KEY" ]; then
 fi
 
 # Get project root - run from /u/siddique-d1/adib/ProAssist
-PROJECT_ROOT="/u/siddique-d1/adib/ProAssist"
+PROJECT_ROOT="/scratch/bbyl/amosharrof/ProAssist"
 if [ ! -d "$PROJECT_ROOT" ]; then
     PROJECT_ROOT="$(pwd)"
 fi
