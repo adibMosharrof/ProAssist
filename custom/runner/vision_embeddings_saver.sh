@@ -119,7 +119,7 @@ run_embeddings_saver() {
 if [ "$IS_SLURM" = true ]; then
     # Submit SLURM job
     echo "🚀 Submitting SLURM job..."
-    sbatch <<EOT
+    sbatch <<'EOT'
 #!/bin/bash
 #SBATCH --mem=$memory
 #SBATCH --time=$time
@@ -133,7 +133,10 @@ if [ "$IS_SLURM" = true ]; then
 #SBATCH --gpus-per-node=$num_gpus
 #SBATCH --constraint='scratch'
 
-# Environment setup on compute node
+# Set project root and environment variables for the job
+PROJECT_ROOT=/scratch/bbyl/amosharrof/ProAssist
+CONDA_ENV_PATH=/scratch/bbyl/amosharrof/ProAssist/.venv
+
 # Activate the virtual environment
 if [ -f "$CONDA_ENV_PATH/bin/activate" ]; then
     source "$CONDA_ENV_PATH/bin/activate"

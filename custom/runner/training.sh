@@ -187,7 +187,7 @@ if [ "$ENVIRONMENT" == "SLURM_SUBMIT" ]; then
     # Preserve original arguments passed to the script for the job script
     ORIGINAL_ARGS="$@"
 
-    sbatch <<EOT
+    sbatch <<'EOT'
 #!/bin/bash
 #SBATCH --mem=$memory
 #SBATCH --time=$time
@@ -201,8 +201,9 @@ if [ "$ENVIRONMENT" == "SLURM_SUBMIT" ]; then
 #SBATCH --gpus-per-node=$num_gpus
 #SBATCH --constraint='scratch'
 
-# Environment detection will run again on the compute node, which 
-# will then correctly trigger the SLURM_EXECUTE path below.
+# Set project root and environment variables for the job
+PROJECT_ROOT=/scratch/bbyl/amosharrof/ProAssist
+CONDA_ENV_PATH=/scratch/bbyl/amosharrof/ProAssist/.venv
 
 # Activate the virtual environment
 if [ -f "$CONDA_ENV_PATH/bin/activate" ]; then
