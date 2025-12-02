@@ -146,3 +146,4 @@ custom/outputs
 ego4d/
 
 wandb/
+slurm_out/
