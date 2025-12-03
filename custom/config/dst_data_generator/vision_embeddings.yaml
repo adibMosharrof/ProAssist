@@ -11,7 +11,7 @@ model:
 # Processing settings
 processing:
   batch_size: 30  # Number of frames to process in parallel
-  frames_root: "${project_root}/data/proassist/processed_data"  # Root path for arrow files with raw frames
+  frames_root: data/proassist/processed_data  # Root path for arrow files with raw frames
 
 # Dataset settings
 dataset:

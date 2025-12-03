@@ -97,7 +97,10 @@ class VisionEmbeddingsSaver:
             cfg: Hydra configuration object
         """
         self.model_name = cfg.model.name
-        self.frames_root = Path(cfg.processing.frames_root)
+        # Build full frames_root path from project_root and relative path
+        project_root = Path(cfg.project_root)
+        frames_root_relative = cfg.processing.frames_root
+        self.frames_root = project_root / frames_root_relative
         self.batch_size = cfg.processing.batch_size
         self.device = getattr(cfg.model, 'device', None)
         self.vision_hidden_size = 1152  # SmolVLM2 vision encoder output dim
@@ -505,7 +508,7 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Datasets: {cfg.dataset.names}")
     logger.info(f"Model: {cfg.model.name}")
     logger.info(f"Batch size: {cfg.processing.batch_size}")
-    logger.info(f"Frames root: {cfg.processing.frames_root}")
+    logger.info(f"Frames root (relative): {cfg.processing.frames_root}")
 
     # Run the embeddings extraction
     try:

@@ -89,8 +89,18 @@ setup_environment() {
 
 # --- Execution Function ---
 run_embeddings_saver() {
-    echo "🚀 Running Python Script..."
-    python -m dst_data_builder.vision_embeddings_saver
+    echo ""
+    echo "🚀 Starting Vision Embeddings Extraction (Hydra-controlled)..."
+    echo "📂 Running from: $(pwd)"
+    echo "🐍 Python module: dst_data_builder.vision_embeddings_saver"
+    echo "📁 Project root: $PROJECT_ROOT"
+    echo ""
+
+    # Run the embeddings saver with project_root override
+    python -m dst_data_builder.vision_embeddings_saver project_root=$PROJECT_ROOT
+
+    echo ""
+    echo "✅ Vision embeddings extraction completed successfully!"
 }
 
 # --- Main Logic ---
