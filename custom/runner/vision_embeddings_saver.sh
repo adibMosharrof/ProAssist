@@ -1,44 +1,26 @@
 #!/bin/bash
 
 #######################################################
-# Vision Embeddings Saver Runner - Dynamic for Local/SLURM environments
-# Extracts and saves vision embeddings from SmolVLM2
-# for DST training data preprocessing
+# Vision Embeddings Saver Runner - FIXED for Delta
 #######################################################
 
 set -e
 
 # --- Environment Detection ---
-
-# Check 1: Are we running as a SLURM job (on a compute node)?
-# This check is necessary because the script runs itself on the compute node 
-# after submission and must distinguish the execution phase from the submission phase.
 if [ -n "$SLURM_JOB_ID" ]; then
     ENVIRONMENT="SLURM_EXECUTE"
     IS_SLURM=true
-    echo "🔍 Detected COMPUTE NODE (Job ID: $SLURM_JOB_ID)"
-
-# Check 2: Can we submit a SLURM job? This is the simplified check for the Login Node.
-# We consolidate the checks (sbatch exists is enough to confirm cluster context).
 elif command -v sbatch &> /dev/null; then
     ENVIRONMENT="SLURM_SUBMIT"
     IS_SLURM=true
-    echo "🔍 Detected CLUSTER LOGIN NODE (Ready for submission)"
-
 else
-    # Default case: Running on a local/unrelated development machine.
     ENVIRONMENT="LOCAL_RUN"
     IS_SLURM=false
-    echo "🔍 Detected LOCAL DEVELOPMENT ENVIRONMENT"
 fi
 
-# Print header
-echo "╔══════════════════════════════════════════════╗"
-echo "║   Vision Embeddings Saver Runner${IS_SLURM:+ (SLURM)} ║"
-echo "╚══════════════════════════════════════════════╝"
-echo ""
+echo "🔍 Detected Environment: $ENVIRONMENT"
 
-# --- Configuration Setup ---
+# --- Configuration ---
 setting="$1"
 interactive="i"
 
@@ -47,79 +29,74 @@ if [ "$IS_SLURM" = true ]; then
     if [[ "$setting" == "$interactive" ]]; then
         partition='gpuA40x4-interactive'
         time='1:00:00'
-        num_gpus=2
+        num_gpus=1  # Reduced to 1 to help you get a node faster in 'mix' state
     else
-        partition='gpuA100x4'
+        partition='gpuA40x4'
         time='2-00:00:00'
         num_gpus=4
     fi
     memory=200g
 
-    # Delta cluster paths
+    # Delta paths
     PROJECT_ROOT=/scratch/bbyl/amosharrof/ProAssist
     CONDA_ENV_PATH=/scratch/bbyl/amosharrof/ProAssist/.venv
 
-    # Setup SLURM output folders
+    # Logs
     d_folder=$(date +'%Y-%m-%d')
     SLURM_FOLDER_BASE=slurm_out/vision_embeddings/
     mkdir -p $SLURM_FOLDER_BASE/$d_folder
     SLURM_FOLDER=$SLURM_FOLDER_BASE/$d_folder
 else
-    # Local machine configuration
+    # Local Configuration
     PROJECT_ROOT=/u/siddique-d1/adib/ProAssist
     CONDA_ENV_PATH=$PROJECT_ROOT/.venv
-
-    echo "📁 Local project root: $PROJECT_ROOT"
-    echo "🐍 Conda env path: $CONDA_ENV_PATH"
 fi
 
-# --- Environment Setup ---
+# --- The Fixed Environment Setup ---
 setup_environment() {
-    # Source environment
-    if [ -f ~/.bash_profile ]; then
-        source ~/.bash_profile
-        echo "Sourced: ~/.bash_profile"
-    fi
-    if [ -f ~/.bashrc ]; then
-        source ~/.bashrc
-        echo "Sourced: ~/.bashrc"
+    echo "🔧 Setting up environment..."
+
+    # 1. ACTIVATE CONDA (The NCSA Delta Way)
+    # Check for the specific NCSA conda file from your working ztrainer script
+    if [ -f "/sw/external/python/anaconda3_gpu/etc/profile.d/conda.sh" ]; then
+        echo "✓ Found NCSA Delta Conda Configuration"
+        source /sw/external/python/anaconda3_gpu/etc/profile.d/conda.sh
+        conda activate "$CONDA_ENV_PATH"
+        
+        # Load helper modules (good practice on Delta)
+        module load libaio/0.3.113 2>/dev/null || true
+        
+    # Fallback for Local Machine (Standard Anaconda/Miniconda)
+    elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
+        source "$HOME/anaconda3/etc/profile.d/conda.sh"
+        conda activate "$CONDA_ENV_PATH"
+    elif [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+        source "$HOME/miniconda3/etc/profile.d/conda.sh"
+        conda activate "$CONDA_ENV_PATH"
+    else
+        # Last resort: try simple activation if conda is already in PATH
+        source activate "$CONDA_ENV_PATH" || conda activate "$CONDA_ENV_PATH"
     fi
 
-    # Handle HOME change for conda (if needed)
-    if [ -f ~/.bash_profile ]; then
-        cd ~ && source ~/.bash_profile > /dev/null 2>&1
-        echo "Sourced (after HOME change): ~/.bash_profile"
-    fi
-
-    # Change to project root
+    # 2. Project Setup
     cd "$PROJECT_ROOT"
-    echo "📁 Current working directory: $(pwd)"
-
-    # Set PYTHONPATH
-    export PYTHONPATH="$PROJECT_ROOT/custom/src:/mounts/u-amo-d1/adibm-data/projects/ZSToD/src:${PYTHONPATH:-}"
+    # Append custom src to pythonpath
+    export PYTHONPATH="$PROJECT_ROOT/custom/src:${PYTHONPATH:-}"
+    
+    echo "✅ Active Python: $(which python)"
     echo "📦 PYTHONPATH: $PYTHONPATH"
 }
 
-# --- Execution ---
+# --- Execution Function ---
 run_embeddings_saver() {
-    echo ""
-    echo "🚀 Starting Vision Embeddings Extraction (Hydra-controlled)..."
-    echo "📂 Running from: $(pwd)"
-    echo "🐍 Python module: dst_data_builder.vision_embeddings_saver"
-    echo ""
-
-    # Run the embeddings saver
+    echo "🚀 Running Python Script..."
     python -m dst_data_builder.vision_embeddings_saver
-
-    echo ""
-    echo "✅ Vision embeddings extraction completed successfully!"
 }
 
 # --- Main Logic ---
-if [ "$IS_SLURM" = true ]; then
-    # Submit SLURM job
-    echo "🚀 Submitting SLURM job..."
-    sbatch <<'EOT'
+if [ "$ENVIRONMENT" == "SLURM_SUBMIT" ]; then
+    echo "🚀 Submitting SLURM job to partition: $partition"
+    sbatch <<EOT
 #!/bin/bash
 #SBATCH --mem=$memory
 #SBATCH --time=$time
@@ -133,29 +110,21 @@ if [ "$IS_SLURM" = true ]; then
 #SBATCH --gpus-per-node=$num_gpus
 #SBATCH --constraint='scratch'
 
-# Set project root and environment variables for the job
-PROJECT_ROOT=/scratch/bbyl/amosharrof/ProAssist
-CONDA_ENV_PATH=/scratch/bbyl/amosharrof/ProAssist/.venv
+# Pass variables to the job
+PROJECT_ROOT=$PROJECT_ROOT
+CONDA_ENV_PATH=$CONDA_ENV_PATH
 
-# Activate the virtual environment
-if [ -f "$CONDA_ENV_PATH/bin/activate" ]; then
-    source "$CONDA_ENV_PATH/bin/activate"
-    echo "Activated virtual environment: $CONDA_ENV_PATH"
-else
-    echo "Warning: Could not find virtual environment at $CONDA_ENV_PATH"
-fi
-
+# Export functions to subshell
 $(declare -f setup_environment)
-setup_environment
-
 $(declare -f run_embeddings_saver)
-run_embeddings_saver
 
+setup_environment
+run_embeddings_saver
 exit 0
 EOT
+
 else
-    # Run locally
-    echo "🚀 Running locally..."
+    # Running Interactively or Locally
     setup_environment
     run_embeddings_saver
 fi
