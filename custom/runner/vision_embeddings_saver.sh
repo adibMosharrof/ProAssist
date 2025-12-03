@@ -106,10 +106,11 @@ run_embeddings_saver() {
     echo "🚀 Starting Vision Embeddings Extraction (Hydra-controlled)..."
     echo "📂 Running from: $(pwd)"
     echo "🐍 Python module: dst_data_builder.vision_embeddings_saver"
+    echo "📁 Project root: $PROJECT_ROOT"
     echo ""
 
-    # Run the embeddings saver
-    python -m dst_data_builder.vision_embeddings_saver
+    # Run the embeddings saver with project_root override
+    python -m dst_data_builder.vision_embeddings_saver project_root=$PROJECT_ROOT
 
     echo ""
     echo "✅ Vision embeddings extraction completed successfully!"
