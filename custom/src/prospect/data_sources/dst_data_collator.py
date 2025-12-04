@@ -233,13 +233,16 @@ class DSTDataCollator:
     ) -> List[torch.Tensor]:
         """Extract embeddings for each turn based on frame indices.
         
+        Only turns with frame information get embeddings. System turns and other
+        turns without frames contribute only text tokens, not embeddings.
+        
         Args:
             conv: List of conversation turns with start_frame/end_frame
             clip_start_frame: Starting frame index of this clip
             clip_embeddings: Precomputed embeddings [num_frames, 2048]
             
         Returns:
-            List of embedding tensors, one per turn (empty tensor for turns without frames)
+            List of embedding tensors (only for turns with frames, no empty tensors)
         """
         turn_embeddings_list = []
         
@@ -251,19 +254,11 @@ class DSTDataCollator:
                 turn_start_pickle = turn_start_video - clip_start_frame
                 turn_end_pickle = turn_end_video - clip_start_frame
                 
-                # Extract turn-specific embeddings (inclusive range)
-                if turn_start_pickle >= 0 and turn_end_pickle < clip_embeddings.shape[0]:
-                    turn_emb = clip_embeddings[turn_start_pickle:turn_end_pickle + 1]
+                # Extract turn-specific embeddings (turn_end_video is exclusive)
+                if turn_start_pickle >= 0 and turn_end_pickle <= clip_embeddings.shape[0]:
+                    turn_emb = clip_embeddings[turn_start_pickle:turn_end_pickle]
                     turn_embeddings_list.append(turn_emb)
-                else:
-                    # Frame indices out of bounds
-                    turn_embeddings_list.append(
-                        torch.tensor([], dtype=clip_embeddings.dtype).reshape(0, clip_embeddings.shape[-1])
-                    )
-            else:
-                # Turn without frames (system message, etc.)
-                turn_embeddings_list.append(
-                    torch.tensor([], dtype=clip_embeddings.dtype).reshape(0, clip_embeddings.shape[-1])
-                )
+                # If out of bounds, skip (no embedding for this turn)
+            # If no frame info (system turn, etc.), skip (no embedding for this turn)
         
         return turn_embeddings_list
