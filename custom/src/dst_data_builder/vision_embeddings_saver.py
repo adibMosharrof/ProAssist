@@ -64,9 +64,18 @@ def save_embeddings_for_dataset(
         if (i + 1) % 10 == 0:
             logger.info(f"  Progress: {i+1}/{len(clips)}")
         
+        # Validate clip before processing
+        if not saver.validate_clip(clip, dataset_name):
+            logger.warning(f"Skipping clip {clip.get('video_uid')} due to validation failure")
+            continue
+
         # No try-except, let errors propagate
-        result = saver.save_embeddings_for_clip(clip, dataset_name, output_dir)
-        results.append(result)
+        try:
+            result = saver.save_embeddings_for_clip(clip, dataset_name, output_dir)
+            results.append(result)
+        except Exception as e:
+            logger.error(f"Failed to save embeddings for clip {clip.get('video_uid')}: {e}")
+            continue
     
     logger.info(f"✓ Successfully saved embeddings for all {len(clips)} clips")
     
@@ -132,6 +141,72 @@ class VisionEmbeddingsSaver:
         self.model.requires_grad_(False)
         
         logger.info(f"✓ Vision encoder loaded")
+
+    def validate_clip(self, clip: Dict[str, Any], dataset_name: str) -> bool:
+        """
+        Validate if a clip's frame indices are within bounds of the Arrow file.
+        
+        Args:
+            clip: Clip data
+            dataset_name: Dataset name
+            
+        Returns:
+            True if valid, False otherwise
+        """
+        video_uid = clip.get("video_uid")
+        if not video_uid:
+            return False
+            
+        # Build frame file path
+        if dataset_name != "assembly101":
+            frame_file = f"frames/{video_uid}.arrow"
+        else:
+            frame_file_name = video_uid.split("_", 1)[1]
+            frame_file = f"frames/{frame_file_name}.arrow"
+        
+        arrow_path = self.frames_root / dataset_name / frame_file
+        
+        if not arrow_path.exists():
+            logger.warning(f"Validation failed: Arrow file not found: {arrow_path}")
+            return False
+            
+        try:
+            # We use hf_datasets.Dataset.from_file which is lazy and fast
+            # It reads the metadata footer to get the length
+            dataset = hf_datasets.Dataset.from_file(str(arrow_path))
+            dataset_len = len(dataset)
+        except Exception as e:
+            logger.warning(f"Validation failed: Could not read Arrow file {arrow_path}: {e}")
+            return False
+            
+        start_frame = clip.get("start_frame_idx")
+        end_frame = clip.get("end_frame_idx")
+        
+        if start_frame is None or end_frame is None:
+            logger.warning(f"Validation failed: Missing frame indices for {video_uid}")
+            return False
+            
+        # Check bounds
+        # end_frame_idx is exclusive, so max valid index is end_frame_idx - 1
+        # The required frames are [start_frame, end_frame)
+        # So we need start_frame >= 0 and end_frame <= dataset_len
+        
+        if start_frame < 0:
+            logger.warning(f"Validation failed: Negative start frame {start_frame} for {video_uid}")
+            return False
+            
+        if end_frame > dataset_len:
+            logger.warning(
+                f"Validation failed: End frame {end_frame} exceeds dataset size {dataset_len} "
+                f"for {video_uid}"
+            )
+            return False
+            
+        if start_frame >= end_frame:
+            logger.warning(f"Validation failed: start_frame {start_frame} >= end_frame {end_frame} for {video_uid}")
+            return False
+            
+        return True
     
     def extract_cls_token(self, processor_output: dict, batch_size: int) -> torch.Tensor:
         """
@@ -233,7 +308,7 @@ class VisionEmbeddingsSaver:
             raise ValueError(f"frame_indices cannot be empty")
         
         dataset = hf_datasets.Dataset.from_file(str(arrow_file))
-        
+
         images = []
         
         for idx in frame_indices:
@@ -335,10 +410,18 @@ class VisionEmbeddingsSaver:
             )
         
         # Load only the frames needed for this clip
-        frame_indices = list(range(start_frame, end_frame + 1))
+        # Note: end_frame_idx is EXCLUSIVE (Python convention), so use it directly in range()
+        frame_indices = list(range(start_frame, end_frame))
         frames = self.load_frames_from_arrow(arrow_path, frame_indices)
         
         if not frames:
+            return {
+            "video_uid": video_uid,
+            "clip_id": clip_id,
+            "shape": 2048,
+            "saved_path": "",
+        }
+        
             raise ValueError(
                 f"No frames loaded for clip {video_uid} from range [{start_frame}:{end_frame}] "
                 f"in {arrow_path}"
@@ -515,7 +598,14 @@ def main(cfg: DictConfig) -> None:
         summary = save_vision_embeddings(cfg)
 
         logger.info("Vision embeddings extraction completed successfully!")
-        logger.info(f"Summary: {summary}")
+        
+        # Save summary to JSON
+        output_dir = Path(HydraConfig.get().runtime.output_dir)
+        summary_file = output_dir / "vision_embeddings_summary.json"
+        with open(summary_file, "w") as f:
+            json.dump(summary, f, indent=2)
+            
+        logger.info(f"Summary saved to: {summary_file}")
 
     except Exception as e:
         logger.error(f"Vision embeddings extraction failed: {e}")
