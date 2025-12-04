@@ -6,6 +6,8 @@ defaults:
   # - generator: single
   - generator: hybrid_dst
   - model: gpt4o
+  - input_style: proassist
+  - _self_
   # - model: claude4_5
 # Generation configuration for SPEAK/DST integration
 generation:

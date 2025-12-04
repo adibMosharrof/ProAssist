@@ -2,6 +2,7 @@
 defaults:
   - model: dst_smolvlm2
   - data_source: dst_training
+  - input_style: proassist
   - _self_
 
 # Output directory

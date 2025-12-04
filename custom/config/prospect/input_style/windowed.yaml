@@ -1,0 +1,5 @@
+# Windowed Input Style Configuration
+# Fixed window frame assignment
+name: windowed
+fps: 2
+window_size: 4
