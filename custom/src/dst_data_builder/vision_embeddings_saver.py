@@ -408,6 +408,33 @@ class VisionEmbeddingsSaver:
             raise ValueError(
                 f"Clip {video_uid} missing required 'end_frame_idx' field"
             )
+            
+        # Check if embeddings already exist and are valid
+        output_file = output_dir / f"{clip_id}_embeddings.pkl"
+        expected_frames = end_frame - start_frame
+        
+        if output_file.exists():
+            try:
+                with open(output_file, "rb") as f:
+                    existing_embeddings = pickle.load(f)
+                
+                # Check shape: [num_frames, hidden_dim]
+                if existing_embeddings.shape[0] == expected_frames:
+                    logger.info(f"Skipping {clip_id}: Embeddings exist with correct shape {existing_embeddings.shape}")
+                    return {
+                        "video_uid": video_uid,
+                        "clip_id": clip_id,
+                        "shape": existing_embeddings.shape,
+                        "saved_path": str(output_file),
+                        "skipped": True
+                    }
+                else:
+                    logger.warning(
+                        f"Re-generating {clip_id}: Shape mismatch. "
+                        f"Found {existing_embeddings.shape[0]} frames, expected {expected_frames}."
+                    )
+            except Exception as e:
+                logger.warning(f"Re-generating {clip_id}: Failed to verify existing file: {e}")
         
         # Load only the frames needed for this clip
         # Note: end_frame_idx is EXCLUSIVE (Python convention), so use it directly in range()

@@ -36,6 +36,8 @@ class DSTTrainingDataset(Dataset):
         dataset_name: str,
         max_seq_len: int = 4096,
         neg_frame_sampling_rate: float = 0.5,
+        input_style: str = "proassist",
+        input_style_config: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize DST Training Dataset with precomputed embeddings.
@@ -53,7 +55,15 @@ class DSTTrainingDataset(Dataset):
         self.dataset_name = dataset_name
         self.max_seq_len = max_seq_len
         self.neg_frame_sampling_rate = neg_frame_sampling_rate
-
+        
+        # Input Style Configuration
+        # We assume the config is passed in or we use default 'proassist'
+        # Since __init__ signature is fixed by Hydra instantiation usually, 
+        # we might need to add input_style to args or read from a global config if available.
+        # For now, let's add it as an optional kwarg or default to 'proassist'
+        # But wait, __init__ args come from hydra config.
+        # We should add input_style to __init__ arguments.
+        
         # Lazy loading: only count clips without loading data into memory
         self._num_clips = self._get_num_clips()
         self._clips_cache = {}  # Keyed by data_file path

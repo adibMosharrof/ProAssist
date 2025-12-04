@@ -51,12 +51,10 @@ class FrameIntegration:
         # Note: frames_file path is NOT added here since DST training doesn't use frames
         # The training dataset will handle frame loading directly from video_uid when needed
 
-        # Add frame metadata to each conversation turn
-        updated_conversation = []
-        for turn in conversation:
-            updated_turn = self._add_frame_metadata_to_turn(turn)
-            updated_conversation.append(updated_turn)
-
+        # Apply input style to calculate frame indices for the whole conversation
+        # This replaces the per-turn iteration
+        updated_conversation = self._apply_input_style(conversation)
+        
         # Update conversation in video data
         video_data["conversation"] = updated_conversation
 
@@ -80,91 +78,37 @@ class FrameIntegration:
 
         return video_data
 
-    def _add_frame_metadata_to_turn(self, turn: Dict[str, Any]) -> Dict[str, Any]:
+    def _apply_input_style(self, conversation: List[Dict[str, Any]], total_frames: Optional[int] = None) -> List[Dict[str, Any]]:
         """
-        Add frame metadata to a single conversation turn
-
-        Args:
-            turn: Single conversation turn
-
-        Returns:
-            Updated turn with frame metadata
+        Apply the configured input style to calculate frame indices for the conversation.
         """
-        updated_turn = turn.copy()
+        from custom.src.common.input_styles import get_input_style
+        
+        # Get input style from config
+        # With Hydra defaults, this should be a DictConfig containing the style params
+        input_style_cfg = self.cfg.get("input_style")
+        
+        style_name = "proassist"
+        style_config = {
+            "fps": self.fps,
+            "window_size": self.training_config.get("window_size", 4)
+        }
 
-        # Skip if already has frame metadata
-        if "start_frame" in updated_turn and "end_frame" in updated_turn:
-            return updated_turn
-
-        # Get timestamp from turn
-        timestamp = turn.get("time", 0)
-
-        # Calculate frame range for this turn
-        start_frame, end_frame = self._calculate_frame_range_for_timestamp(timestamp)
-
-        # Add frame metadata to turn
-        updated_turn["start_frame"] = start_frame
-        updated_turn["end_frame"] = end_frame
-
-        # Validate frame alignment
-        if not self._validate_frame_alignment(updated_turn):
-            self.logger.warning(f"Frame alignment issue for turn at time {timestamp}")
-
-        return updated_turn
-
-    def _validate_frame_alignment(self, turn: Dict[str, Any]) -> bool:
-        """
-        Validate that frame alignment is reasonable for a single turn
-
-        Args:
-            turn: Single conversation turn
-
-        Returns:
-            True if frame alignment is reasonable
-        """
-        # Basic validation - ensure start_frame <= end_frame
-        start_frame = turn.get("start_frame", 0)
-        end_frame = turn.get("end_frame", 0)
-
-        if start_frame > end_frame:
-            return False
-
-        # Ensure reasonable frame count (not too many frames for single turn)
-        frame_count = end_frame - start_frame
-        if frame_count > self.fps * 5:  # More than 5 seconds of frames for single turn
-            self.logger.warning(
-                f"Too many frames for single turn: {frame_count}, turn time: {turn['time']}"
-            )
-            return False
-
-        return True
-
-    def _calculate_frame_range_for_timestamp(self, timestamp: float) -> Tuple[int, int]:
-        """
-        Calculate frame range for a specific timestamp
-
-        Args:
-            timestamp: Time in seconds
-
-        Returns:
-            Tuple of (start_frame, end_frame)
-        """
-        # Calculate center frame
-        center_frame = int(timestamp * self.fps)
-
-        # Calculate frame range around the timestamp
-        half_duration = self.frame_duration / 2
-        start_time = max(0, timestamp - half_duration)
-        end_time = timestamp + half_duration
-
-        start_frame = int(start_time * self.fps)
-        end_frame = int(end_time * self.fps)
-
-        # Ensure at least one frame
-        if end_frame <= start_frame:
-            end_frame = start_frame + 1
-
-        return start_frame, end_frame
+        if input_style_cfg is not None:
+            if isinstance(input_style_cfg, (dict, DictConfig)):
+                # It's a config object (expected with Hydra defaults)
+                style_name = input_style_cfg.get("name", "proassist")
+                style_config.update(input_style_cfg)
+            else:
+                # It's just a string name (legacy/override)
+                style_name = str(input_style_cfg)
+        
+        try:
+            style = get_input_style(style_name, style_config)
+            return style.calculate_frame_indices(conversation, total_frames)
+        except Exception as e:
+            self.logger.error(f"Failed to apply input style {style_name}: {e}")
+            return conversation
 
     def _calculate_overall_frame_range(
         self, conversation: List[Dict[str, Any]]
@@ -237,8 +181,8 @@ class FrameIntegration:
                     )
                 
                 # Ensure valid range after clipping
-                if clipped_start >= clipped_end:
-                    # If clipping resulted in invalid range, skip this turn's frame info
+                if clipped_start > clipped_end:
+                    # If clipping resulted in invalid range (start > end), skip this turn's frame info
                     self.logger.warning(
                         f"Turn frames [{start_frame}, {end_frame}] fall completely outside "
                         f"clip bounds [{clip_start_frame}, {clip_end_frame}], skipping frame info"

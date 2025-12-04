@@ -131,6 +131,18 @@ class DSTTrainingProspect:
             self.logger.info(f"Loading dataset: {dataset_name}")
             
            
+            # Extract input style configuration
+            input_style_cfg = self.cfg.get("input_style")
+            input_style_name = "proassist"
+            input_style_config_dict = {}
+            
+            if input_style_cfg is not None:
+                if isinstance(input_style_cfg, (dict, DictConfig)):
+                    input_style_name = input_style_cfg.get("name", "proassist")
+                    input_style_config_dict = OmegaConf.to_container(input_style_cfg, resolve=True)
+                else:
+                    input_style_name = str(input_style_cfg)
+
             # Load train dataset
             train_ds = DSTTrainingDataset(
                 data_path=self.cfg.data_source.data_path,
@@ -138,6 +150,8 @@ class DSTTrainingProspect:
                 dataset_name=dataset_name,
                 max_seq_len=self.cfg.data_source.max_seq_len,
                 neg_frame_sampling_rate=self.cfg.data_source.neg_frame_sampling_rate,
+                input_style=input_style_name,
+                input_style_config=input_style_config_dict,
             )
             train_datasets.append(train_ds)
             
@@ -148,6 +162,8 @@ class DSTTrainingProspect:
                 dataset_name=dataset_name,
                 max_seq_len=self.cfg.data_source.max_seq_len,
                 neg_frame_sampling_rate=1.0,  # No negative sampling for validation
+                input_style=input_style_name,
+                input_style_config=input_style_config_dict,
             )
             val_datasets.append(val_ds)
         
@@ -267,8 +283,8 @@ class DSTTrainingProspect:
             self.logger.info(f"Multi-GPU setup: {accelerator.num_processes} GPUs")
 
         # Setup all components
-        self._load_model_and_processor()
         self._setup_datasets()
+        self._load_model_and_processor()
         self._setup_data_collator()
         
         # Let Trainer handle model and dataset preparation with Accelerate
