@@ -310,40 +310,6 @@ def main(cfg: DictConfig) -> None:
     # stderr captures error messages, warnings, and exceptions
     stderr_log_file = os.path.join(hydra_output_dir, "training_stderr.log")
     
-    # with open(stdout_log_file, "w") as stdout_f, open(stderr_log_file, "w") as stderr_f:
-    #     # Create a tee-like object that writes to both file and console
-    #     class Tee:
-    #         def __init__(self, file_obj, console_obj):
-    #             self.file = file_obj
-    #             self.console = console_obj
-    #         
-    #         def write(self, message):
-    #             self.file.write(message)
-    #             self.file.flush()
-    #             self.console.write(message)
-    #         
-    #         def flush(self):
-    #             self.file.flush()
-    #             self.console.flush()
-    #         
-    #         def isatty(self):
-    #             return self.console.isatty()
-    #     
-    #     # Store original stdout/stderr
-    #     original_stdout = sys.stdout
-    #     original_stderr = sys.stderr
-    #     
-    #     # Redirect stdout and stderr to separate files while still showing on console
-    #     sys.stdout = Tee(stdout_f, original_stdout)
-    #     sys.stderr = Tee(stderr_f, original_stderr)
-    #     
-    #     try:
-    #         trainer = DSTTrainingProspect(cfg)
-    #         trainer.run(cfg)
-    #     finally:
-    #         # Restore original stdout/stderr
-    #         sys.stdout = original_stdout
-    #         sys.stderr = original_stderr
     with open(stdout_log_file, "w") as stdout_f, open(stderr_log_file, "w") as stderr_f:
         # Create a tee-like object that writes to both file and console
         class Tee:
