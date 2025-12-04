@@ -67,6 +67,12 @@ class FrameIntegration:
         video_data["start_frame_idx"] = start_frame_idx
         video_data["end_frame_idx"] = end_frame_idx
 
+        # Validate and clip all turn frames to be within the clip's frame bounds
+        updated_conversation = self._validate_and_clip_turn_frames(
+            updated_conversation, start_frame_idx, end_frame_idx
+        )
+        video_data["conversation"] = updated_conversation
+
         # self.logger.info(
         #     f"Added frame metadata to {len(updated_conversation)} turns, "
         #     f"frame range: {start_frame_idx}-{end_frame_idx}"
@@ -187,6 +193,67 @@ class FrameIntegration:
             return 0, 0
 
         return min(start_frames), max(end_frames)
+
+    def _validate_and_clip_turn_frames(
+        self,
+        conversation: List[Dict[str, Any]],
+        clip_start_frame: int,
+        clip_end_frame: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        Validate and clip turn frame indices to be within clip bounds.
+        
+        All turn frames must be within [clip_start_frame, clip_end_frame].
+        If frames exceed bounds, they are clipped to fit within the clip.
+
+        Args:
+            conversation: List of conversation turns
+            clip_start_frame: Start frame index of the clip
+            clip_end_frame: End frame index of the clip
+
+        Returns:
+            Updated conversation with clipped frame indices
+        """
+        updated_conversation = []
+        
+        for turn in conversation:
+            updated_turn = turn.copy()
+            
+            # Only validate turns that have frame information
+            if "start_frame" in updated_turn and "end_frame" in updated_turn:
+                start_frame = updated_turn["start_frame"]
+                end_frame = updated_turn["end_frame"]
+                
+                # Clip frames to be within clip bounds
+                clipped_start = max(start_frame, clip_start_frame)
+                clipped_end = min(end_frame, clip_end_frame)
+                
+                # Log if clipping occurred
+                if clipped_start != start_frame or clipped_end != end_frame:
+                    self.logger.warning(
+                        f"Clipping turn frames from [{start_frame}, {end_frame}] "
+                        f"to [{clipped_start}, {clipped_end}] "
+                        f"to fit within clip bounds [{clip_start_frame}, {clip_end_frame}]"
+                    )
+                
+                # Ensure valid range after clipping
+                if clipped_start >= clipped_end:
+                    # If clipping resulted in invalid range, skip this turn's frame info
+                    self.logger.warning(
+                        f"Turn frames [{start_frame}, {end_frame}] fall completely outside "
+                        f"clip bounds [{clip_start_frame}, {clip_end_frame}], skipping frame info"
+                    )
+                    # Remove frame info from this turn if it's completely outside bounds
+                    updated_turn.pop("start_frame", None)
+                    updated_turn.pop("end_frame", None)
+                else:
+                    # Update with clipped values
+                    updated_turn["start_frame"] = clipped_start
+                    updated_turn["end_frame"] = clipped_end
+            
+            updated_conversation.append(updated_turn)
+        
+        return updated_conversation
 
 
 
