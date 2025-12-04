@@ -260,13 +260,10 @@ class ConversationSplitter:
             # Ensure segment starts with a system prompt
             first_turn_role = conversation[0].get("role") if conversation else None
             if first_turn_role != "system":
-                # Add system prompt at the beginning
+                # Add system prompt at the beginning (system role doesn't have frame indices)
                 system_prompt = {
                     "role": "system",
-                    "content": "You are a helpful assistant.",
-                    "start_frame": 0,
-                    "end_frame": 2,
-                    "labels": "system|generic"
+                    "content": "You are a helpful assistant."
                 }
                 conversation.insert(0, system_prompt)
                 segment["conversation"] = conversation
