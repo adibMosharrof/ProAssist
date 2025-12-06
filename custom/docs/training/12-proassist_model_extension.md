@@ -183,7 +183,7 @@ Update the runner to work with `DSTProActLlamaForCausalLM` instead of `DSTSmolVL
 
 ---
 
-### Phase 4: Training
+### Phase 4: Training with Role Tokens and Binary Heads
 
 #### [MODIFY] `custom/src/prospect/training/dst_custom_trainer.py`
 
@@ -193,7 +193,209 @@ Update the trainer to handle the new model's loss signature.
 -   The model's `forward()` will now return losses for `speaking_decision_head` and `dst_update_head`.
 -   Log these losses separately for monitoring.
 
----
+#### 4.1 Special Tokens
+
+| Token     | Purpose                          | Training Label                |
+| --------- | -------------------------------- | ----------------------------- |
+| `<image>` | Vision embedding placeholder     | N/A (replaced with embedding) |
+| `[DST]`   | Prefix for DST update generation | Supervise with DST text       |
+| `[ASST]`  | Prefix for assistant response    | Supervise with response text  |
+
+#### 4.2 Training Data Format (Continuous Sequence)
+
+**One training sample = entire video clip as a single continuous sequence:**
+
+```
+<image_0> <image_1> <image_2> <image_3> [ASST] Pick up the screwdriver <eos> <image_4> <image_5> [DST] S1->done <eos> [DST] S2->start <eos> <image_6> <image_7> [ASST] Now insert the screw <eos> <image_8> <image_9>
+```
+
+**Example Breakdown (10-frame assembly video):**
+
+| Position | Token(s)                               | Description                     |
+| -------- | -------------------------------------- | ------------------------------- |
+| 0-2      | `<img_0> <img_1> <img_2>`              | Silent frames (no output)       |
+| 3        | `<img_3>`                              | Frame triggers speaking         |
+| 4-10     | `[ASST] Pick up the screwdriver <eos>` | Assistant response              |
+| 11       | `<img_4>`                              | Silent frame                    |
+| 12       | `<img_5>`                              | Frame triggers DST update       |
+| 13-16    | `[DST] S1->done <eos>`                 | First DST update                |
+| 17-20    | `[DST] S2->start <eos>`                | Second DST update (same frame!) |
+| 21       | `<img_6>`                              | Silent frame                    |
+| 22       | `<img_7>`                              | Frame triggers speaking         |
+| 23-28    | `[ASST] Now insert the screw <eos>`    | Assistant response              |
+| 29-30    | `<img_8> <img_9>`                      | Silent frames                   |
+
+**Key Points:**
+- Multiple DST updates at same frame → back-to-back `[DST]` tokens
+- Binary heads predict at each `<image>` position
+- LM loss only on text tokens (not `<image>` tokens)
+
+#### 4.3 Loss Computation
+
+```python
+# 1. Language Modeling Loss (autoregressive, ignore <image> tokens)
+lm_loss = cross_entropy(logits, labels)  # labels=-100 for <image> tokens
+
+# 2. Speaking Decision Loss (at <image> positions only)
+img_mask = (input_ids == config.img_token_id)
+speaking_loss = binary_cross_entropy(
+    speaking_logits[img_mask], speaking_labels[img_mask]
+)
+
+# 3. DST Update Decision Loss (at <image> positions only)
+dst_loss = binary_cross_entropy(
+    dst_update_logits[img_mask], dst_update_labels[img_mask]
+)
+
+# Combined Loss
+total_loss = lm_loss + λ * (speaking_loss + dst_loss)
+```
+
+#### 4.4 Binary Head Training Strategy
+
+Binary heads predict at each `<image>` token whether generation follows.
+
+**Tokenized View (Single Frame with DST):**
+
+```
+Token:      [IMG]  [DST]   S    1    ->  done  <eos>
+Position:     0      1     2    3     4    5     6
+              ↑
+              Binary heads predict here (dst=1, speaking=0)
+              LM loss starts from position 1 onward (labels[0] = -100)
+```
+
+**Tokenized View (Continuous Sequence Excerpt):**
+
+```
+Token:      [IMG_4] [IMG_5] [DST]  S1  ->  done <eos> [DST]  S2  -> start <eos> [IMG_6]
+Position:     0       1       2     3   4    5    6     7     8   9   10    11    12
+              ↑       ↑                                                          ↑
+           dst=0   dst=1                                                      dst=0
+         speaking=0 speaking=0                                              speaking=0
+                    └── Binary heads predict "generate DST" here
+```
+
+**Training Signal Summary:**
+
+| Position | Token     | LM Label | Speaking Label | DST Label |
+| -------- | --------- | -------- | -------------- | --------- |
+| 0        | `[IMG_4]` | -100     | 0              | 0         |
+| 1        | `[IMG_5]` | -100     | 0              | **1**     |
+| 2        | `[DST]`   | `[DST]`  | -100           | -100      |
+| 3        | `S1`      | `S1`     | -100           | -100      |
+| 4        | `->`      | `->`     | -100           | -100      |
+| 5        | `done`    | `done`   | -100           | -100      |
+| 6        | `<eos>`   | `<eos>`  | -100           | -100      |
+| 7        | `[DST]`   | `[DST]`  | -100           | -100      |
+| ...      | ...       | ...      | ...            | ...       |
+| 12       | `[IMG_6]` | -100     | 0              | 0         |
+
+**Key Points:**
+- Binary labels only at `<image>` positions (rest = -100)
+- LM labels only at text tokens (images = -100)
+- `<image>` token is replaced with frame embedding during forward pass
+
+**Label Assignment per `<image>` position:**
+- `speaking_labels[i] = 1` if `[ASST]` follows this `<image>`
+- `dst_update_labels[i] = 1` if `[DST]` follows this `<image>`
+
+#### 4.5 Tokenizer Setup
+
+```python
+from transformers import AutoTokenizer
+
+tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-3B-Instruct")
+
+# Add special tokens
+special_tokens = {
+    "additional_special_tokens": ["<image>", "[DST]", "[ASST]"]
+}
+tokenizer.add_special_tokens(special_tokens)
+
+# Store token IDs in config
+config.img_token_id = tokenizer.convert_tokens_to_ids("<image>")
+config.dst_gen_token_id = tokenizer.convert_tokens_to_ids("[DST]")
+config.asst_gen_token_id = tokenizer.convert_tokens_to_ids("[ASST]")
+```
+
+#### 4.6 Inference Optimization (Early Exit)
+
+```
+For each frame:
+  1. Append <image> embedding to KV cache
+  2. Forward pass → get binary head outputs at last position
+  3. Check decisions:
+     - If dst_head > threshold: generate with [DST] prefix, repeat check
+     - If speaking_head > threshold: generate with [ASST] prefix
+     - If neither: skip generation (move to next frame)
+```
+
+**Performance:** ~90% of frames are silent → ~10x speedup
+
+#### 4.7 Data Collator (Continuous Sequence Builder)
+
+```python
+def collate_fn(batch):
+    """Build continuous sequences from clip data."""
+    all_input_ids = []
+    all_labels = []
+    all_speaking_labels = []
+    all_dst_labels = []
+    all_image_embeds = []
+    
+    for sample in batch:
+        input_ids = []
+        labels = []
+        speaking_labels = []
+        dst_labels = []
+        
+        for frame_idx, frame_data in enumerate(sample["frames"]):
+            # Add <image> token
+            input_ids.append(config.img_token_id)
+            labels.append(-100)  # Don't predict <image>
+            
+            # Binary labels at this <image> position
+            speaking_labels.append(frame_data.get("speaking", 0))
+            dst_labels.append(frame_data.get("dst_update", 0))
+            
+            # Add DST updates (if any)
+            for dst_update in frame_data.get("dst_updates", []):
+                dst_tokens = tokenizer.encode(f"[DST] {dst_update}", add_special_tokens=False)
+                input_ids.extend(dst_tokens)
+                labels.extend(dst_tokens)  # LM loss on DST text
+                speaking_labels.extend([-100] * len(dst_tokens))
+                dst_labels.extend([-100] * len(dst_tokens))
+            
+            # Add assistant response (if any)
+            if frame_data.get("response"):
+                resp_tokens = tokenizer.encode(f"[ASST] {frame_data['response']}", add_special_tokens=False)
+                input_ids.extend(resp_tokens)
+                labels.extend(resp_tokens)  # LM loss on response
+                speaking_labels.extend([-100] * len(resp_tokens))
+                dst_labels.extend([-100] * len(resp_tokens))
+        
+        all_input_ids.append(torch.tensor(input_ids))
+        all_labels.append(torch.tensor(labels))
+        all_speaking_labels.append(torch.tensor(speaking_labels))
+        all_dst_labels.append(torch.tensor(dst_labels))
+        all_image_embeds.append(sample["embeddings"])  # [num_frames, 1152]
+    
+    # Pad sequences
+    input_ids = pad_sequence(all_input_ids, batch_first=True, padding_value=tokenizer.pad_token_id)
+    labels = pad_sequence(all_labels, batch_first=True, padding_value=-100)
+    speaking_labels = pad_sequence(all_speaking_labels, batch_first=True, padding_value=-100)
+    dst_labels = pad_sequence(all_dst_labels, batch_first=True, padding_value=-100)
+    
+    return {
+        "input_ids": input_ids,
+        "labels": labels,
+        "speaking_labels": speaking_labels,
+        "dst_update_labels": dst_labels,
+        "image_embeds": all_image_embeds,  # List of tensors
+    }
+```
+
 
 ### Phase 5: Pre-computing Embeddings with ProAssist's Vision Encoder
 
@@ -353,3 +555,5 @@ Your existing pre-computed embeddings (CLS token, 1 per image) are compatible wi
 2.  Implement Phase 1 (Config).
 3.  Implement Phase 2 (Model).
 4.  Test with a minimal inference script before full integration.
+
+

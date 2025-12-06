@@ -1,0 +1,33 @@
+# SigLIP Embeddings Extraction Configuration
+# Uses ProAssist's SigLIP encoder to extract CLS token embeddings
+
+defaults:
+  - _self_
+
+# Model configuration
+model:
+  vision_pretrained: "google/siglip-so400m-patch14-384"
+  vision_hidden_size: 1152  # SigLIP output dimension
+
+# Processing configuration  
+processing:
+  batch_size: 512
+  frames_root: "data/proassist/processed_data"  # Frames at {frames_root}/{dataset_name}/frames
+
+# Dataset configuration
+dataset:
+  output_dir: ${project_root}/custom/outputs/dst_generated/sparse_format/2025-12-06/05-27-35_gpt-4o_proassist_sparse
+  names:
+    - assembly101
+
+# Logging
+logging:
+  level: INFO
+
+# Project root
+project_root: /u/siddique-d1/adib/ProAssist
+
+# Hydra configuration
+hydra:
+  run:
+    dir: ${project_root}/custom/outputs/siglip_embeddings/${now:%Y-%m-%d}/${now:%H-%M-%S}

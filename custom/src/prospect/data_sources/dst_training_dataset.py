@@ -11,8 +11,11 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 import torch
 from torch.utils.data import Dataset
+import datasets as hf_datasets
 
 from custom.src.prospect.data_sources.dst_chat_formatter import DSTMultimodalChat
+
+logger = logging.getLogger(__name__)
 
 logger = logging.getLogger(__name__)
 
@@ -97,19 +100,26 @@ class DSTTrainingDataset(Dataset):
         clips = self._load_clips_from_file(data_file)
         
         valid_clips = []
-        embeddings_dir = self.data_path / self.dataset_name / "frames"
+        siglip_dir = self.data_path / self.dataset_name / "siglip_features"
+        frames_dir = self.data_path / self.dataset_name / "frames"
         
         for clip in clips:
             clip_id = clip["id"]
-            embeddings_file = embeddings_dir / f"{clip_id}_embeddings.pkl"
             
-            if embeddings_file.exists():
+            # Check for SigLIP Arrow file first (1152-dim)
+            siglip_file = siglip_dir / f"{clip_id}.arrow"
+            # Then check for pickle file (2048-dim or other)
+            pkl_file = frames_dir / f"{clip_id}_embeddings.pkl"
+            
+            if siglip_file.exists():
+                valid_clips.append(clip)
+            elif pkl_file.exists():
                 valid_clips.append(clip)
             else:
-                logger.warning(f"Skipping clip {clip_id}: Embeddings file not found at {embeddings_file}")
+                logger.warning(f"Skipping clip {clip_id}: No embeddings found at {siglip_file} or {pkl_file}")
                 
         if not valid_clips:
-            raise FileNotFoundError(f"No valid clips found in {data_file} with existing embeddings in {embeddings_dir}")
+            raise FileNotFoundError(f"No valid clips found in {data_file} with existing embeddings")
 
         logger.info(f"Loaded {len(valid_clips)} valid clips (skipped {len(clips) - len(valid_clips)} missing)")
         return valid_clips
@@ -122,32 +132,40 @@ class DSTTrainingDataset(Dataset):
         """
         Get one training sample (one clip with all its turns).
         """
-        import pickle
-        
         clip = self.clips[idx]
-
-        # Use 'id' field which corresponds to the embeddings filename
         clip_id = clip["id"]
         
-        # Load precomputed embeddings instead of raw frames
-        # Embeddings are at: {data_path}/{dataset_name}/frames/{id}_embeddings.pkl
-        embeddings_dir = self.data_path / self.dataset_name / "frames"
-        embeddings_file = embeddings_dir / f"{clip_id}_embeddings.pkl"
+        # Try SigLIP Arrow file first (1152-dim), then pickle (2048-dim)
+        siglip_dir = self.data_path / self.dataset_name / "siglip_features"
+        siglip_file = siglip_dir / f"{clip_id}.arrow"
         
-        if not embeddings_file.exists():
-            raise FileNotFoundError(
-                f"Embeddings file not found for clip {idx} (id={clip_id}). "
-                f"Expected: {embeddings_file}\n"
-                f"Ensure precomputed embeddings exist at: {embeddings_dir}/{clip_id}_embeddings.pkl"
-            )
-        
-        try:
-            with open(embeddings_file, "rb") as f:
-                embeddings_np = pickle.load(f)
-            embeddings = torch.from_numpy(embeddings_np).float()  # [num_frames, 2048]
-        except Exception as e:
-            logger.error(f"Failed to load embeddings from {embeddings_file}: {e}")
-            raise
+        if siglip_file.exists():
+            # Load SigLIP embeddings from Arrow file
+            try:
+                ds = hf_datasets.Dataset.from_file(str(siglip_file))
+                embeddings_list = [torch.tensor(row["cls"]) for row in ds]
+                embeddings = torch.stack(embeddings_list).float()  # [num_frames, 1152]
+            except Exception as e:
+                logger.error(f"Failed to load SigLIP embeddings from {siglip_file}: {e}")
+                raise
+        else:
+            # Fall back to pickle file
+            embeddings_dir = self.data_path / self.dataset_name / "frames"
+            embeddings_file = embeddings_dir / f"{clip_id}_embeddings.pkl"
+            
+            if not embeddings_file.exists():
+                raise FileNotFoundError(
+                    f"Embeddings file not found for clip {idx} (id={clip_id}). "
+                    f"Expected: {siglip_file} or {embeddings_file}"
+                )
+            
+            try:
+                with open(embeddings_file, "rb") as f:
+                    embeddings_np = pickle.load(f)
+                embeddings = torch.from_numpy(embeddings_np).float()  # [num_frames, 2048]
+            except Exception as e:
+                logger.error(f"Failed to load embeddings from {embeddings_file}: {e}")
+                raise
         
         # Filter valid turns (those with frames within embeddings bounds)
         # IMPORTANT: Frame indices in turns are VIDEO indices, need to convert to pickle indices

@@ -1,7 +1,7 @@
 from typing import Dict, Any
-from custom.src.common.input_styles.base_style import BaseInputStyle
-from custom.src.common.input_styles.proassist_style import ProAssistInputStyle
-from custom.src.common.input_styles.windowed_style import WindowedInputStyle
+from common.input_styles.base_style import BaseInputStyle
+from common.input_styles.proassist_style import ProAssistInputStyle
+from common.input_styles.windowed_style import WindowedInputStyle
 
 def get_input_style(style_name: str, config: Dict[str, Any]) -> BaseInputStyle:
     """

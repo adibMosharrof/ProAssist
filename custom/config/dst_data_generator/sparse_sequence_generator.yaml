@@ -1,0 +1,65 @@
+# Sparse Sequence Generator Configuration
+# Extends simple_dst_generator with sparse output format
+
+defaults:
+  - data_source: proassist
+  - generator: hybrid_dst
+  - model: gpt4o
+  - input_style: proassist
+  - _self_
+
+# Generation configuration
+generation:
+  evidence_spans: false
+  enable_multiprocessing: false
+  multiprocessing_processes: 12
+
+# Training data creation configuration (inherited from simple_dst_generator)
+training_creation:
+  # Frame integration
+  fps: 2
+  dst_frame_duration: 2
+
+  # Sequence calculation
+  max_seq_len: 4096
+  num_tokens_per_img: 1
+  tokenizer_name: "meta-llama/Llama-3.2-3B-Instruct"
+  special_tokens_count: 10
+
+  # Conversation splitting - CRITICAL for avoiding OOM
+  enable_conversation_splitting: true
+  keep_context_length: [5, 20]
+
+  # Conversation creation
+  conversation_format: "proassist_training"
+  include_system_prompt: true
+
+  # DST grounding
+  enable_dst_labels: true
+  validate_transitions: true
+
+  # Dataset metadata
+  include_quality_metrics: true
+  add_knowledge: false
+
+# Sparse sequence specific configuration
+tokenizer: "meta-llama/Llama-3.2-3B-Instruct"
+max_sequence_tokens: 4096
+fps: 2
+
+# Output format control
+output:
+  save_intermediate: false  # We generate sparse format directly
+
+max_retries: 1
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+exp_name: sparse
+
+# Hydra configuration
+hydra:
+  run:
+    dir: custom/outputs/dst_generated/sparse_format/${now:%Y-%m-%d}/${now:%H-%M-%S}_${model.log_name}_${data_source.name}_${exp_name}

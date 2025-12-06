@@ -1,0 +1,64 @@
+# DST ProAssist Training Configuration
+
+model:
+  llm_pretrained: "meta-llama/Llama-3.2-3B-Instruct"
+  vision_hidden_size: 1152  # SigLIP output dimension
+  max_seq_len: 4096
+  use_speaking_decision_head: true
+  use_dst_update_head: true
+  binary_decision_head_type: "linear"
+  binary_loss_weight: 1.0
+  # Quantization settings
+  use_int4_quantization: false  # Set to true to enable 4-bit quantization (saves ~75% memory)
+  bnb_4bit_compute_dtype: "bfloat16"  # Compute dtype for quantized model
+  bnb_4bit_quant_type: "nf4"  # Quantization type: "nf4" or "fp4"
+  bnb_4bit_use_double_quant: true  # Use double quantization for extra memory savings
+
+lora:
+  use_lora: true
+  lora_r: 128
+  lora_alpha: 256
+  lora_dropout: 0.05
+  lora_target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+  modules_to_save:
+    - "mm_projector"
+    - "speaking_decision_head"
+    - "dst_update_head"
+
+data:
+  data_dir: "custom/outputs/dst_generated/sparse_format/2025-12-06/05-27-35_gpt-4o_proassist_sparse"
+  dataset_name: "assembly101"
+  siglip_features_dir: null  # Will use data_dir if null
+
+training:
+  output_dir: "checkpoints"
+  num_epochs: 3
+  batch_size: 1
+  eval_batch_size: 1
+  gradient_accumulation_steps: 1
+  learning_rate: 2e-5
+  warmup_steps: 10
+  logging_steps: 1
+  save_steps: 50
+  eval_steps: 50
+  save_total_limit: 2
+  bf16: true
+  fp16: false
+  num_workers: 0
+  report_to: wandb
+  dataloader_drop_last: true
+  ddp_find_unused_parameters: false
+
+# Hydra configuration
+hydra:
+  run:
+    dir: custom/outputs/dst_proassist_training/${now:%Y-%m-%d}/${now:%H-%M}
+  job:
+    chdir: false

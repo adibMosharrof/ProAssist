@@ -6,9 +6,11 @@ import torch.multiprocessing as mp
 import numpy as np
 import sys
 
+from transformers import AutoTokenizer
+
 from custom.src.prospect.inference.dst_stream_runner import DSTStreamRunner
 from custom.src.prospect.metrics.base_metric import BaseMetric
-from custom.src.prospect.models.dst_smolvlm_with_strategies import DSTSmolVLMWithStrategies
+from custom.src.prospect.models.dst_proact import DSTProActLlamaConfig, DSTProActLlamaForCausalLM
 
 logger = logging.getLogger(__name__)
 
@@ -25,39 +27,63 @@ def _init_worker(model_config, dataset, fps):
     global worker_model, worker_processor, worker_dataset, worker_fps, worker_runner, worker_id
     
     # Determine worker ID from process name or identity
-    # rank is 1-based usually
     ident = mp.current_process()._identity
     rank = ident[0] if ident else 1
-    worker_id = rank - 1 # 0-based
+    worker_id = rank - 1  # 0-based
     
     device = f"cuda:{worker_id % torch.cuda.device_count()}"
     
-    # Load model
-    from transformers import AutoConfig
-    from custom.src.prospect.models.dst_smolvlm_with_strategies import DSTSmolVLMWithStrategies
+    # Load model using DSTProActLlamaForCausalLM
+    llm_pretrained = model_config.get("llm_pretrained", "meta-llama/Llama-3.2-3B-Instruct")
+    vision_hidden_size = model_config.get("vision_hidden_size", 1152)
     
-    model_name = model_config.name
-    config = AutoConfig.from_pretrained(model_name)
+    config = DSTProActLlamaConfig.from_pretrained_llama(
+        llm_pretrained,
+        vision_hidden_size=vision_hidden_size,
+    )
     
+    # Apply any additional config overrides
     for key, value in model_config.items():
         if hasattr(config, key):
             setattr(config, key, value)
-        else:
-            setattr(config, key, value)
             
-    worker_model = DSTSmolVLMWithStrategies.from_pretrained(model_name, config=config)
+    worker_model = DSTProActLlamaForCausalLM.from_pretrained(
+        llm_pretrained, 
+        config=config,
+        torch_dtype=torch.float16,
+    )
+    worker_model.init_multimodal_modules()  # Initialize projector + heads
     worker_model.to(device)
     worker_model.eval()
     
-    # Load processor
-    from transformers import AutoProcessor
-    worker_processor = AutoProcessor.from_pretrained(model_name)
+    # Load tokenizer
+    worker_processor = AutoTokenizer.from_pretrained(llm_pretrained)
+    
+    # Add special tokens
+    tokens_to_add = []
+    if config.img_token not in worker_processor.get_vocab():
+        tokens_to_add.append(config.img_token)
+    if config.dst_gen_token not in worker_processor.get_vocab():
+        tokens_to_add.append(config.dst_gen_token)
+    if config.asst_gen_token not in worker_processor.get_vocab():
+        tokens_to_add.append(config.asst_gen_token)
+    
+    if tokens_to_add:
+        worker_processor.add_tokens(tokens_to_add, special_tokens=True)
+    
+    # Store token IDs in config
+    config.img_token_id = worker_processor.convert_tokens_to_ids(config.img_token)
+    config.dst_gen_token_id = worker_processor.convert_tokens_to_ids(config.dst_gen_token)
+    config.asst_gen_token_id = worker_processor.convert_tokens_to_ids(config.asst_gen_token)
+    
+    worker_model.config.img_token_id = config.img_token_id
+    worker_model.config.dst_gen_token_id = config.dst_gen_token_id
+    worker_model.config.asst_gen_token_id = config.asst_gen_token_id
     
     worker_dataset = dataset
     worker_fps = fps
     
     # Initialize runner
-    # Pass worker_id + 1 for position to avoid overlap with main bar (pos 0)
     worker_runner = DSTStreamRunner(
         model=worker_model,
         processor=worker_processor,
@@ -127,37 +153,63 @@ class DSTEvaluator:
         
     def _run_sequential_inference(self) -> Dict[int, List[Any]]:
         """Run inference sequentially on a single GPU."""
-        # For sequential, we can just use the worker init logic but in main process
-        # Or reuse the existing logic. Let's reuse existing but simplified.
-        
         device = "cuda" if torch.cuda.is_available() else "cpu"
         
-        # Load model
-        from transformers import AutoConfig
-        model_name = self.model_config.name
-        config = AutoConfig.from_pretrained(model_name)
+        # Load model using DSTProActLlamaForCausalLM
+        llm_pretrained = self.model_config.get("llm_pretrained", "meta-llama/Llama-3.2-3B-Instruct")
+        vision_hidden_size = self.model_config.get("vision_hidden_size", 1152)
+        
+        config = DSTProActLlamaConfig.from_pretrained_llama(
+            llm_pretrained,
+            vision_hidden_size=vision_hidden_size,
+        )
+        
         for key, value in self.model_config.items():
             if hasattr(config, key):
                 setattr(config, key, value)
-            else:
-                setattr(config, key, value)
-        model = DSTSmolVLMWithStrategies.from_pretrained(model_name, config=config)
+        
+        model = DSTProActLlamaForCausalLM.from_pretrained(
+            llm_pretrained, 
+            config=config,
+            torch_dtype=torch.float16,
+        )
+        model.init_multimodal_modules()
         model.to(device)
         model.eval()
         
-        from transformers import AutoProcessor
-        processor = AutoProcessor.from_pretrained(model_name)
+        # Load tokenizer
+        tokenizer = AutoTokenizer.from_pretrained(llm_pretrained)
+        
+        # Add special tokens
+        tokens_to_add = []
+        if config.img_token not in tokenizer.get_vocab():
+            tokens_to_add.append(config.img_token)
+        if config.dst_gen_token not in tokenizer.get_vocab():
+            tokens_to_add.append(config.dst_gen_token)
+        if config.asst_gen_token not in tokenizer.get_vocab():
+            tokens_to_add.append(config.asst_gen_token)
+        
+        if tokens_to_add:
+            tokenizer.add_tokens(tokens_to_add, special_tokens=True)
+        
+        # Store token IDs in config
+        config.img_token_id = tokenizer.convert_tokens_to_ids(config.img_token)
+        config.dst_gen_token_id = tokenizer.convert_tokens_to_ids(config.dst_gen_token)
+        config.asst_gen_token_id = tokenizer.convert_tokens_to_ids(config.asst_gen_token)
+        
+        model.config.img_token_id = config.img_token_id
+        model.config.dst_gen_token_id = config.dst_gen_token_id
+        model.config.asst_gen_token_id = config.asst_gen_token_id
         
         runner = DSTStreamRunner(
             model=model,
-            processor=processor,
+            processor=tokenizer,
             fps=self.fps,
             device=device,
-            worker_id=1 # Position 1
+            worker_id=1
         )
         
         results = {}
-        # Global bar at pos 0
         for i in tqdm(range(len(self.dataset)), desc="Total Video Progress", position=0):
             sample = self.dataset[i]
             outputs = runner.run_inference_on_video(sample)

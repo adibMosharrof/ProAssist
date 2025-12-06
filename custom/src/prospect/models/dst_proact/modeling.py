@@ -1,0 +1,359 @@
+"""
+DST ProAct Modeling
+
+Model classes for ProAssist-style DST architecture.
+"""
+
+import logging
+from typing import Optional, Tuple
+
+import torch
+import torch.nn as nn
+from transformers import LlamaForCausalLM, AutoModelForCausalLM
+from transformers.modeling_outputs import CausalLMOutputWithPast
+
+from prospect.models.dst_proact.configuration import DSTProActLlamaConfig
+
+logger = logging.getLogger(__name__)
+
+KV_CACHE = Tuple[Tuple[torch.FloatTensor, torch.FloatTensor], ...]
+ce_loss = nn.functional.cross_entropy
+bce_loss = nn.functional.binary_cross_entropy_with_logits
+
+
+class DSTProActModelMixin(AutoModelForCausalLM):
+    """Mixin adding multimodal and DST capabilities to base LLM."""
+    
+    def _init_multimodal_modules(self, mm_feature_size: int, lm_input_size: int) -> None:
+        """Initialize projector and decision heads."""
+        self.mm_projector = nn.Sequential(
+            nn.Linear(mm_feature_size, lm_input_size, bias=True),
+            nn.GELU(),
+            nn.Linear(lm_input_size, lm_input_size, bias=True),
+        )
+        self.mm_projector.to(self.device, self.dtype)
+        
+        # Speaking decision head
+        self.speaking_decision_head = None
+        if self.config.use_speaking_decision_head:
+            if "linear" in self.config.binary_decision_head_type:
+                self.speaking_decision_head = nn.Linear(lm_input_size, 1)
+            else:
+                self.speaking_decision_head = nn.Sequential(
+                    nn.Linear(lm_input_size, lm_input_size // 2),
+                    nn.GELU(),
+                    nn.Linear(lm_input_size // 2, 1),
+                )
+            self.speaking_decision_head.to(self.device, self.dtype)
+        
+        # DST update decision head
+        self.dst_update_head = None
+        if self.config.use_dst_update_head:
+            if "linear" in self.config.binary_decision_head_type:
+                self.dst_update_head = nn.Linear(lm_input_size, 1)
+            else:
+                self.dst_update_head = nn.Sequential(
+                    nn.Linear(lm_input_size, lm_input_size // 2),
+                    nn.GELU(),
+                    nn.Linear(lm_input_size // 2, 1),
+                )
+            self.dst_update_head.to(self.device, self.dtype)
+        
+        logger.info(f"✓ Initialized multimodal modules ({mm_feature_size} -> {lm_input_size})")
+    
+    def mm_feature_proj(self, features: torch.Tensor) -> torch.Tensor:
+        """Project vision features to LLM embedding space."""
+        return self.mm_projector(features)
+    
+    def joint_embed(
+        self,
+        input_ids: torch.Tensor,
+        image_embeds: Optional[torch.Tensor] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        """Create joint embeddings from text and image.
+        
+        Args:
+            input_ids: [batch_size, seq_len]
+            image_embeds: Either:
+                - Tensor of shape [batch_size, num_frames, hidden_size]
+                - List of tensors, each [num_frames_i, hidden_size]
+        """
+        clamped_input_ids = input_ids.clamp(max=self.config.vocab_size - 1)
+        inputs_embeds = self.get_input_embeddings()(clamped_input_ids)
+        
+        if image_embeds is None:
+            return inputs_embeds
+        
+        # Handle list of tensors (variable-length embeddings per sample)
+        if isinstance(image_embeds, list):
+            # Process each sample in the batch
+            img_token_id = self.config.img_token_id
+            if img_token_id is None:
+                raise ValueError("img_token_id not set in config")
+            
+            for batch_idx, sample_embeds in enumerate(image_embeds):
+                # Project embeddings for this sample
+                projected = self.mm_feature_proj(sample_embeds.to(self.dtype))  # [num_frames, hidden_size]
+                
+                # Find image token positions for this sample
+                img_positions = (input_ids[batch_idx] == img_token_id).nonzero(as_tuple=True)[0]
+                
+                # Replace image tokens with projected embeddings
+                if len(img_positions) != len(projected):
+                    raise ValueError(
+                        f"Mismatch: {len(img_positions)} image tokens but {len(projected)} embeddings"
+                    )
+                inputs_embeds[batch_idx, img_positions] = projected
+            
+            return inputs_embeds
+        
+        # Handle single tensor (original behavior)
+        projected_embeds = self.mm_feature_proj(image_embeds.to(self.dtype))
+        if projected_embeds.dim() == 3:
+            projected_embeds = projected_embeds.flatten(0, 1)
+        
+        img_token_id = self.config.img_token_id
+        if img_token_id is None:
+            raise ValueError("img_token_id not set in config")
+        
+        inputs_embeds[input_ids == img_token_id] = projected_embeds
+        return inputs_embeds
+    
+    @torch.no_grad()
+    def fast_greedy_generate(
+        self,
+        inputs_embeds: torch.Tensor,
+        past_key_values: Optional[KV_CACHE] = None,
+        max_length: int = 100,
+        drop_generated_kv_cache: bool = False,
+        output_hidden_states: bool = False,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, KV_CACHE, Optional[CausalLMOutputWithPast]]:
+        """Fast greedy generation with KV cache (ProAssist pattern).
+        
+        Returns:
+            - generated token ids
+            - updated KV cache
+            - first step outputs (contains binary head logits if output_hidden_states=True)
+        """
+        if not hasattr(self, "inplace_output_ids") or self.inplace_output_ids.shape[1] < max_length:
+            self.inplace_output_ids = torch.full((1, max_length), -100, dtype=torch.long, device=self.device)
+        
+        past_key_values_to_return = past_key_values
+        token_idx = 0
+        first_outputs = None
+        
+        for i in range(max_length):
+            outputs = self.forward(
+                inputs_embeds=inputs_embeds,
+                past_key_values=past_key_values,
+                use_cache=True,
+                output_hidden_states=output_hidden_states if i == 0 else False,
+                return_dict=True,
+            )
+            past_key_values = outputs.past_key_values
+            new_token_id = outputs.logits[:, -1:].argmax(dim=-1)
+            self.inplace_output_ids[:, i] = new_token_id
+            token_idx = i
+            
+            if i == 0:
+                past_key_values_to_return = past_key_values
+                first_outputs = outputs  # Capture first step outputs for binary heads
+            
+            if new_token_id.item() == self.config.eos_token_id:
+                break
+            
+            inputs_embeds = self.get_input_embeddings()(new_token_id)
+        
+        if not drop_generated_kv_cache:
+            past_key_values_to_return = past_key_values
+        
+        return self.inplace_output_ids[:, :token_idx + 1], past_key_values_to_return, first_outputs
+
+
+class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
+    """DST-extended Llama model with multimodal support."""
+    
+    config_class = DSTProActLlamaConfig
+    _keys_to_ignore_on_load_missing = ["mm_projector", "speaking_decision_head", "dst_update_head"]
+    
+    def __init__(self, config: DSTProActLlamaConfig) -> None:
+        super().__init__(config)
+        self.mm_projector = None
+        self.speaking_decision_head = None
+        self.dst_update_head = None
+        logger.info("✓ DSTProActLlamaForCausalLM initialized")
+    
+    def init_multimodal_modules(self) -> None:
+        """Initialize multimodal projection and decision heads."""
+        self._init_multimodal_modules(self.config.vision_hidden_size, self.config.hidden_size)
+    
+    def forward(
+        self,
+        input_ids: Optional[torch.LongTensor] = None,
+        image_embeds: Optional[torch.FloatTensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[KV_CACHE] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        labels: Optional[torch.LongTensor] = None,
+        speaking_gen_labels: Optional[torch.LongTensor] = None,
+        dst_gen_labels: Optional[torch.LongTensor] = None,
+        speaking_labels: Optional[torch.BoolTensor] = None,
+        dst_update_labels: Optional[torch.BoolTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        **kwargs,
+    ) -> CausalLMOutputWithPast:
+        """Forward pass with multimodal fusion and binary heads."""
+        output_hidden_states = (
+            self.config.use_speaking_decision_head or 
+            self.config.use_dst_update_head or 
+            output_hidden_states
+        )
+        
+        if inputs_embeds is None:
+            inputs_embeds = self.joint_embed(input_ids, image_embeds)
+        
+        # Truncate during training
+        if self.training and self.config.max_seq_len > 0 and inputs_embeds.shape[1] > self.config.max_seq_len:
+            max_len = self.config.max_seq_len
+            inputs_embeds = inputs_embeds[:, :max_len]
+            if labels is not None:
+                labels = labels[:, :max_len]
+            if attention_mask is not None:
+                attention_mask = attention_mask[:, :max_len]
+            if speaking_labels is not None:
+                speaking_labels = speaking_labels[:, :max_len]
+            if dst_update_labels is not None:
+                dst_update_labels = dst_update_labels[:, :max_len]
+        
+        outputs = super().forward(
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            use_cache=use_cache if not self.training else False,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=True,
+        )
+        
+        # Binary head outputs
+        if output_hidden_states and outputs.hidden_states:
+            last_hidden = outputs.hidden_states[-1]
+            if self.speaking_decision_head:
+                outputs.speaking_logits = self.speaking_decision_head(last_hidden).squeeze(-1)
+            if self.dst_update_head:
+                outputs.dst_update_logits = self.dst_update_head(last_hidden).squeeze(-1)
+        
+        # Compute losses
+        loss = None
+        log_dict = {}
+        
+        # Handle separate generation labels for DST and speaking
+        if speaking_gen_labels is not None:
+            # Compute LM loss for assistant responses
+            mask = speaking_gen_labels != -100
+            if mask.any():
+                speaking_gen_loss = ce_loss(
+                    outputs.logits[mask],
+                    speaking_gen_labels[mask]
+                )
+                loss = speaking_gen_loss
+                log_dict["speaking_gen_loss"] = speaking_gen_loss.item()
+        
+        if dst_gen_labels is not None:
+            # Compute LM loss for DST updates
+            mask = dst_gen_labels != -100
+            if mask.any():
+                dst_gen_loss = ce_loss(
+                    outputs.logits[mask],
+                    dst_gen_labels[mask]
+                )
+                loss = (loss + dst_gen_loss) if loss is not None else dst_gen_loss
+                log_dict["dst_gen_loss"] = dst_gen_loss.item()
+        
+        # Fallback to standard labels if separate labels not provided
+        if loss is None and labels is not None:
+            lm_loss = ce_loss(outputs.logits.flatten(0, 1), labels.flatten())
+            loss = lm_loss
+            log_dict["lm_loss"] = lm_loss.item()
+        
+        
+        
+        if speaking_labels is not None and self.speaking_decision_head:
+            mask = speaking_labels != self.config.ignore_id
+            if mask.any():
+                speaking_loss = bce_loss(outputs.speaking_logits[mask], speaking_labels[mask].float())
+                log_dict["speaking_binary_loss"] = speaking_loss.item()
+                loss = (loss + speaking_loss * self.config.binary_loss_weight) if loss is not None else speaking_loss
+                
+                # Compute metrics for speaking decision using sklearn
+                preds = (torch.sigmoid(outputs.speaking_logits[mask]) > 0.5).long().cpu().numpy()
+                targets = speaking_labels[mask].long().cpu().numpy()
+                
+                # Import sklearn metrics
+                from sklearn.metrics import balanced_accuracy_score, precision_recall_fscore_support
+                
+                # Balanced accuracy
+                log_dict["speaking_accuracy"] = float(balanced_accuracy_score(targets, preds))
+                
+                # Precision, Recall, F1 (zero_division=0 handles edge cases)
+                precision, recall, f1, _ = precision_recall_fscore_support(
+                    targets, preds, average='binary', zero_division=0
+                )
+                log_dict["speaking_precision"] = float(precision)
+                log_dict["speaking_recall"] = float(recall)
+                log_dict["speaking_f1"] = float(f1)
+        
+        if dst_update_labels is not None and self.dst_update_head:
+            mask = dst_update_labels != self.config.ignore_id
+            if mask.any():
+                dst_loss = bce_loss(outputs.dst_update_logits[mask], dst_update_labels[mask].float())
+                log_dict["dst_binary_loss"] = dst_loss.item()
+                loss = (loss + dst_loss * self.config.binary_loss_weight) if loss is not None else dst_loss
+                
+                # Compute metrics for DST update decision using sklearn
+                preds = (torch.sigmoid(outputs.dst_update_logits[mask]) > 0.5).long().cpu().numpy()
+                targets = dst_update_labels[mask].long().cpu().numpy()
+                
+                # Import sklearn metrics
+                from sklearn.metrics import balanced_accuracy_score, precision_recall_fscore_support
+                
+                # Balanced accuracy
+                log_dict["dst_accuracy"] = float(balanced_accuracy_score(targets, preds))
+                
+                # Precision, Recall, F1 (zero_division=0 handles edge cases)
+                precision, recall, f1, _ = precision_recall_fscore_support(
+                    targets, preds, average='binary', zero_division=0
+                )
+                log_dict["dst_precision"] = float(precision)
+                log_dict["dst_recall"] = float(recall)
+                log_dict["dst_f1"] = float(f1)
+        
+        
+        
+        # Return new output object with loss (outputs is a frozen dataclass, can't modify in-place)
+        output = CausalLMOutputWithPast(
+            loss=loss,
+            logits=outputs.logits,
+            past_key_values=outputs.past_key_values,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )
+        
+        # Attach log_dict as attribute for trainer to access metrics
+        output.log_dict = log_dict
+        
+        return output
+
+
+def trim_past_key_values(past_key_values: KV_CACHE, start: int, stop: int, batch_idx: int = -1) -> KV_CACHE:
+    """Select a slice of past key values."""
+    if batch_idx == -1:
+        return tuple([(k[:, :, start:stop], v[:, :, start:stop]) for k, v in past_key_values])
+    return tuple([(k[batch_idx:batch_idx+1, :, start:stop], v[batch_idx:batch_idx+1, :, start:stop]) for k, v in past_key_values])

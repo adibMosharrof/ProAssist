@@ -82,7 +82,7 @@ class FrameIntegration:
         """
         Apply the configured input style to calculate frame indices for the conversation.
         """
-        from custom.src.common.input_styles import get_input_style
+        from common.input_styles import get_input_style
         
         # Get input style from config
         # With Hydra defaults, this should be a DictConfig containing the style params

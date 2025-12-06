@@ -1,9 +1,9 @@
 import torch
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from dataclasses import dataclass
 from mmassist.eval.runners.stream_inference import FrameOutput
-from custom.src.prospect.models.dst_smolvlm_with_strategies import DSTSmolVLMWithStrategies
+from custom.src.prospect.models.dst_proact import DSTProActLlamaForCausalLM
 from custom.src.prospect.utils.cache_manager import KVCacheManager
 
 logger = logging.getLogger(__name__)
@@ -26,8 +26,8 @@ class DSTStreamRunner:
     
     def __init__(
         self,
-        model: DSTSmolVLMWithStrategies,
-        processor: Any,
+        model: DSTProActLlamaForCausalLM,
+        processor: Any,  # Can be tokenizer or processor
         fps: float = 2.0,
         speaking_threshold: float = 0.5,
         dst_threshold: float = 0.5,
@@ -46,8 +46,15 @@ class DSTStreamRunner:
         self.device = device
         self.worker_id = worker_id
         
-        # Initialize Cache Manager (stateless for now, but ready for strategies)
+        # Initialize Cache Manager
         self.cache_manager = KVCacheManager(context_strategy=None)
+    
+    @property
+    def tokenizer(self):
+        """Get tokenizer from processor or use processor directly if it's a tokenizer."""
+        if hasattr(self.processor, 'tokenizer'):
+            return self.processor.tokenizer
+        return self.processor
         
     def run_inference_on_video(self, sample: Dict[str, Any]) -> List[FrameOutput]:
         """
@@ -77,11 +84,11 @@ class DSTStreamRunner:
         # Initial system prompt
         system_prompt = self._build_updated_schema_prompt(dst_schema, dst_state)
         
-        # Tokenize system prompt
+        # Tokenize system prompt using tokenizer
         messages = [{"role": "system", "content": system_prompt}]
-        text_input = self.processor.apply_chat_template(messages, add_generation_prompt=True)
+        text_input = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
         
-        last_msg_tokens = self.processor(text=text_input, return_tensors="pt").input_ids.to(self.device)
+        last_msg_tokens = self.tokenizer(text_input, return_tensors="pt").input_ids.to(self.device)
         
         outputs = []
         
@@ -110,28 +117,16 @@ class DSTStreamRunner:
                 image_embeds=frame_embed
             )
             
-            # 3. Fast greedy generate with cache (ProAssist pattern)
-            # Returns generated tokens AND updated cache (in tuple format)
-            output_ids, kv_cache = self.model.fast_greedy_generate(
+            # 3. Single forward pass: get tokens AND binary head logits
+            # Returns (token_ids, kv_cache, model_outputs)
+            output_ids, kv_cache, model_outputs = self.model.fast_greedy_generate(
                 inputs_embeds=inputs_embeds,
                 past_key_values=kv_cache,
                 max_length=1,  # Just 1 token for frame processing
-                verbose=False
+                output_hidden_states=True,  # Request binary head logits
             )
             
-            # 4. Get model outputs for binary head logits
-            # Pass tuple cache directly to forward() - transformers handles conversion
-            with torch.no_grad():
-                model_outputs = self.model.forward(
-                    input_ids=input_ids,
-                    image_embeds=frame_embed,
-                    past_key_values=kv_cache,
-                    use_cache=False,
-                    output_hidden_states=True,
-                    return_dict=True
-                )
-            
-            # 5. Update KV Cache with new state
+            # 4. Update KV Cache with new state
             self.cache_manager.update_cache(kv_cache)
             cache_len = self.cache_manager.get_cache_length()
             
@@ -139,43 +134,52 @@ class DSTStreamRunner:
             if frame_idx % 50 == 0 and frame_idx > 0:
                 logger.debug(f"Frame {frame_idx}: KV cache length = {cache_len} tokens")
             
-            # Get binary head decisions from model outputs
-            dst_prob = torch.sigmoid(model_outputs["dst_update_logits"][:, -1])
-            dst_update_triggered = dst_prob > self.dst_threshold
+            # Get binary head decisions from model outputs (use getattr for CausalLMOutputWithPast)
+            dst_logits = getattr(model_outputs, 'dst_update_logits', None)
+            if dst_logits is not None:
+                dst_prob = torch.sigmoid(dst_logits[:, -1])
+                dst_update_triggered = dst_prob > self.dst_threshold
+            else:
+                dst_update_triggered = False
             
             dst_text = None
             if dst_update_triggered:
                 stats["dst_triggered"] += 1
                 # DST updates are short (e.g., "S1->start"), so generate up to 10 tokens
-                # Create input for DST generation: just the last token from output_ids
-                dst_gen_ids, kv_cache = self.model.fast_greedy_generate(
-                    inputs_embeds=(output_ids, frame_embed, {}),
+                # Convert output token IDs to embeddings for generation
+                gen_input_embeds = self.model.get_input_embeddings()(output_ids)
+                dst_gen_ids, kv_cache, _ = self.model.fast_greedy_generate(
+                    inputs_embeds=gen_input_embeds,
                     past_key_values=kv_cache,
                     max_length=10,
-                    verbose=False
                 )
-                # Decode generated tokens (skip the prompt tokens)
-                dst_text = self.processor.tokenizer.decode(dst_gen_ids[0], skip_special_tokens=True)
+                # Decode generated tokens
+                dst_text = self.tokenizer.decode(dst_gen_ids[0], skip_special_tokens=True)
                 # Update cache with DST generation results
                 self.cache_manager.update_cache(kv_cache)
                 dst_state = self._update_state(dst_state, dst_text)
 
             # 6. Check Speaking Decision
-            speaking_prob = torch.sigmoid(model_outputs["speaking_logits"][:, -1])
-            speaking_triggered = speaking_prob > self.speaking_threshold
+            speaking_logits = getattr(model_outputs, 'speaking_logits', None)
+            if speaking_logits is not None:
+                speaking_prob = torch.sigmoid(speaking_logits[:, -1])
+                speaking_triggered = speaking_prob > self.speaking_threshold
+            else:
+                speaking_triggered = False
             
             gen_text = None
             if speaking_triggered:
                 stats["speaking_triggered"] += 1
                 # Generate assistant response (longer, use max_length=50)
-                gen_ids, kv_cache = self.model.fast_greedy_generate(
-                    inputs_embeds=(output_ids, frame_embed, {}),
+                # Convert output token IDs to embeddings for generation
+                gen_input_embeds = self.model.get_input_embeddings()(output_ids)
+                gen_ids, kv_cache, _ = self.model.fast_greedy_generate(
+                    inputs_embeds=gen_input_embeds,
                     past_key_values=kv_cache,
                     max_length=50,
-                    verbose=False
                 )
-                # Decode generated tokens (skip the prompt tokens)
-                gen_text = self.processor.tokenizer.decode(gen_ids[0], skip_special_tokens=True)
+                # Decode generated tokens
+                gen_text = self.tokenizer.decode(gen_ids[0], skip_special_tokens=True)
                 # Update cache with response generation results
                 self.cache_manager.update_cache(kv_cache)
             
@@ -203,8 +207,8 @@ class DSTStreamRunner:
                 
                 system_prompt = self._build_updated_schema_prompt(dst_schema, dst_state)
                 messages = [{"role": "system", "content": system_prompt}]
-                text_input = self.processor.apply_chat_template(messages, add_generation_prompt=True)
-                last_msg_tokens = self.processor(text=text_input, return_tensors="pt").input_ids.to(self.device)
+                text_input = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+                last_msg_tokens = self.tokenizer(text_input, return_tensors="pt").input_ids.to(self.device)
                 logger.info(f"   Rebuilt system prompt with DST state: {len(last_msg_tokens[0])} tokens")
                 
         # Log sparsity statistics

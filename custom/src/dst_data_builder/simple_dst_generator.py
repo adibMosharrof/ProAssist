@@ -229,6 +229,128 @@ class SimpleDSTGenerator:
         )
         return training_samples
 
+    def convert_to_continuous_sequence(self, training_sample: dict) -> dict:
+        """
+        Convert a training sample to sparse continuous sequence format.
+        
+        Only stores frames with events (speaking or DST update).
+        Silent frames are implicit between event frames.
+        
+        Output format:
+        - start_frame: first frame index
+        - end_frame: last frame index  
+        - events: list of event frames (only frames with speaking=1 or dst_update=1)
+        - initial_dst_state: DST state at start of clip (for context)
+        
+        Args:
+            training_sample: Original training sample with conversation
+            
+        Returns:
+            Updated sample with sparse event format
+        """
+        conversation = training_sample.get("conversation", [])
+        
+        # Extract frame range from conversation turns
+        all_start_frames = []
+        all_end_frames = []
+        for turn in conversation:
+            if "start_frame" in turn:
+                all_start_frames.append(turn["start_frame"])
+            if "end_frame" in turn:
+                all_end_frames.append(turn["end_frame"])
+        
+        if not all_start_frames or not all_end_frames:
+            # No frame info found
+            training_sample.pop("conversation", None)  # Remove conversation
+            training_sample["start_frame"] = 0
+            training_sample["end_frame"] = 0
+            training_sample["events"] = []
+            training_sample["initial_dst_state"] = {}
+            return training_sample
+        
+        min_frame = min(all_start_frames)
+        max_frame = max(all_end_frames)
+        
+        # Build sparse frame data - only track frames with events
+        frame_events = {}  # frame_idx -> event data
+        initial_dst_state = {}  # Track DST state at start
+        
+        # Get initial DST state from first turn that has dst_state
+        for turn in conversation:
+            if "dst_state" in turn:
+                initial_dst_state = turn.get("dst_state", {}).copy()
+                break
+        
+        # Process conversation turns to extract events
+        for turn in conversation:
+            role = turn.get("role", "")
+            start_frame = turn.get("start_frame", 0)
+            
+            # DST_UPDATE: add event at start_frame
+            if role == "DST_UPDATE":
+                if start_frame not in frame_events:
+                    frame_events[start_frame] = {
+                        "frame_idx": start_frame,
+                        "speaking": 0,
+                        "dst_update": 1,
+                        "dst_updates": [],
+                        "response": None,
+                    }
+                else:
+                    frame_events[start_frame]["dst_update"] = 1
+                
+                # Format DST content as text: "S1->start" format
+                content = turn.get("content", [])
+                if isinstance(content, list):
+                    for item in content:
+                        if isinstance(item, dict):
+                            step_id = item.get("id", "")
+                            transition = item.get("transition", "")
+                            dst_text = f"{step_id}->{transition}"
+                            frame_events[start_frame]["dst_updates"].append(dst_text)
+                elif isinstance(content, str):
+                    frame_events[start_frame]["dst_updates"].append(content)
+            
+            # Assistant response: add event at start_frame
+            elif role == "assistant":
+                if start_frame not in frame_events:
+                    frame_events[start_frame] = {
+                        "frame_idx": start_frame,
+                        "speaking": 1,
+                        "dst_update": 0,
+                        "dst_updates": [],
+                        "response": None,
+                    }
+                else:
+                    frame_events[start_frame]["speaking"] = 1
+                
+                content = turn.get("content", "")
+                if isinstance(content, str) and content.strip():
+                    if frame_events[start_frame]["response"]:
+                        frame_events[start_frame]["response"] += " " + content
+                    else:
+                        frame_events[start_frame]["response"] = content
+        
+        # Convert to sorted list of events
+        events_list = [frame_events[idx] for idx in sorted(frame_events.keys())]
+        
+        # Remove conversation list (no longer needed)
+        training_sample.pop("conversation", None)
+        
+        # Update the training sample with sparse format
+        training_sample["start_frame"] = min_frame
+        training_sample["end_frame"] = max_frame
+        training_sample["events"] = events_list
+        training_sample["initial_dst_state"] = initial_dst_state
+        training_sample["num_total_frames"] = max_frame - min_frame + 1
+        training_sample["num_event_frames"] = len(events_list)
+        training_sample["speaking_frames"] = sum(1 for e in events_list if e["speaking"])
+        training_sample["dst_update_frames"] = sum(1 for e in events_list if e["dst_update"])
+        
+        return training_sample
+
+
+
     def run(self, cfg: DictConfig) -> None:
         """Run the DST generation process with the given configuration"""
 
@@ -303,6 +425,19 @@ class SimpleDSTGenerator:
                             # Create training format
                             training_data = self.create_training_format(
                                 enhanced_data, dataset_name, split
+                            )
+                            
+                            # Convert each sample to continuous sequence format
+                            for sample in training_data:
+                                self.convert_to_continuous_sequence(sample)
+                            
+                            # Log statistics
+                            total_speaking = sum(s.get("speaking_frames", 0) for s in training_data)
+                            total_dst = sum(s.get("dst_update_frames", 0) for s in training_data)
+                            total_frames = sum(s.get("num_frames", 0) for s in training_data)
+                            self.logger.info(
+                                f"📊 Continuous sequence stats: {total_frames} frames, "
+                                f"{total_speaking} speaking, {total_dst} DST updates"
                             )
 
                             # Save training format
