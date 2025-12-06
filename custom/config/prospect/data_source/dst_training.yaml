@@ -3,7 +3,7 @@
 name: "dst_training"
 
 # Training data path (updated to use ID-based format with precomputed embeddings)
-data_path: ${project_root}/custom/outputs/dst_generated/hybrid_dst/2025-11-30/00-56-27_gpt-4o_proassist_10rows
+data_path: ${project_root}/custom/outputs/dst_generated/hybrid_dst/2025-12-04/13-14-50_gpt-4o_proassist_10rows
 
 # Dataset name
 datasets:
@@ -11,7 +11,7 @@ datasets:
 
 # Data parameters
 max_seq_len: 4096  # Keep it fixed at 4096. I have created my data splits accordingly.
-neg_frame_sampling_rate: 0.3  # 30% negative frame sampling (reduce frames to avoid OOM)
+neg_frame_sampling_rate: 0.2  # 30% negative frame sampling (reduce frames to avoid OOM)
 
 
 

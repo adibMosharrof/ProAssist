@@ -1,0 +1,40 @@
+defaults:
+  - _self_
+
+# Model configuration (inference only - no training params)
+model:
+  name: "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
+  log_name: "dst-smolvlm2-2.2b"
+  use_img_cls_token: true
+  vision_hidden_size: 2048
+
+# Data source configuration (inference only)
+data:
+  name: "dst_eval"
+  data_path: /u/siddique-d1/adib/ProAssist/custom/outputs/dst_generated/hybrid_dst/2025-12-04/13-14-50_gpt-4o_proassist_10rows
+  datasets:
+    - assembly101
+  step_name: "test"
+  max_seq_len: 4096
+  neg_frame_sampling_rate: 0.0
+  input_style: "proassist"
+
+exp_name: dst_inference
+
+inference:
+  num_gpus: 1
+  fps: 2.0
+  max_seq_len: 4096
+  reserved_seq_len: 512
+  speaking_threshold: 0.5
+  dst_threshold: 0.5
+  limit_samples: 2
+  
+metrics:
+  binary: true
+  content: true
+  proassist: true
+
+hydra:
+  run:
+    dir: custom/outputs/dst_inference/${now:%Y-%m-%d}/${now:%H-%M-%S}_${exp_name}

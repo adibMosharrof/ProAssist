@@ -15,7 +15,8 @@ processing:
 
 # Dataset settings
 dataset:
-  output_dir: custom/outputs/dst_generated/hybrid_dst/2025-11-29/05-44-14_gpt-4o_proassist_50rows
+  # output_dir: custom/outputs/dst_generated/hybrid_dst/2025-11-29/05-44-14_gpt-4o_proassist_50rows
+  output_dir: custom/outputs/dst_generated/hybrid_dst/2025-12-04/13-14-50_gpt-4o_proassist_10rows
   names: ["assembly101"]
 
 exp_name: proassist_test

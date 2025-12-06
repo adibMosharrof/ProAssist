@@ -1,0 +1,15 @@
+# DST Evaluation Data Source Configuration
+
+name: "dst_eval"
+
+# Data path (same as training for now)
+data_path: /u/siddique-d1/adib/ProAssist/custom/outputs/dst_generated/hybrid_dst/2025-12-04/13-14-50_gpt-4o_proassist_10rows
+
+# Dataset parameters
+dataset_name: "assembly101"
+step_name: "test" # Use test split
+
+# Data parameters
+max_seq_len: 4096
+neg_frame_sampling_rate: 0.0 # No negative sampling for inference
+input_style: "proassist"
