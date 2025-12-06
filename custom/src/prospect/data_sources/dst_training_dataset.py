@@ -64,9 +64,9 @@ class DSTTrainingDataset(Dataset):
         # But wait, __init__ args come from hydra config.
         # We should add input_style to __init__ arguments.
         
-        # Lazy loading: only count clips without loading data into memory
-        self._num_clips = self._get_num_clips()
-        self._clips_cache = {}  # Keyed by data_file path
+        # Load and filter clips immediately to ensure correct length
+        self.clips = self._load_and_filter_clips()
+        self._num_clips = len(self.clips)
 
         logger.info(
             f"Initialized DST dataset with {self._num_clips} clips from {data_path} "
@@ -91,27 +91,28 @@ class DSTTrainingDataset(Dataset):
 
         return clips
 
-    def _get_num_clips(self) -> int:
-        """Count clips from JSON file without loading all data into memory."""
+    def _load_and_filter_clips(self) -> List[Dict[str, Any]]:
+        """Load clips and filter out those with missing embeddings."""
         data_file = self._get_data_file_path()
         clips = self._load_clips_from_file(data_file)
-        return len(clips)
-
-    def _load_clips(self) -> List[Dict[str, Any]]:
-        """Load all clips from JSON file with caching for lazy loading."""
-        data_file = self._get_data_file_path()
-        data_file_str = str(data_file)
         
-        # Return cached clips if already loaded
-        if data_file_str in self._clips_cache:
-            return self._clips_cache[data_file_str]
+        valid_clips = []
+        embeddings_dir = self.data_path / self.dataset_name / "frames"
         
-        clips = self._load_clips_from_file(data_file)
+        for clip in clips:
+            clip_id = clip["id"]
+            embeddings_file = embeddings_dir / f"{clip_id}_embeddings.pkl"
+            
+            if embeddings_file.exists():
+                valid_clips.append(clip)
+            else:
+                logger.warning(f"Skipping clip {clip_id}: Embeddings file not found at {embeddings_file}")
+                
+        if not valid_clips:
+            raise FileNotFoundError(f"No valid clips found in {data_file} with existing embeddings in {embeddings_dir}")
 
-        # Cache the loaded clips for future access (keyed by data_file path)
-        self._clips_cache[data_file_str] = clips
-
-        return clips
+        logger.info(f"Loaded {len(valid_clips)} valid clips (skipped {len(clips) - len(valid_clips)} missing)")
+        return valid_clips
 
     def __len__(self) -> int:
         """Return number of clips (training samples)."""
@@ -120,27 +121,10 @@ class DSTTrainingDataset(Dataset):
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         """
         Get one training sample (one clip with all its turns).
-
-        For efficiency, loads PRECOMPUTED EMBEDDINGS instead of raw frames.
-        The embeddings are expected to be stored as numpy arrays in pickle files
-        extracted from video using SmolVLM2 vision encoder.
-
-        Returns:
-            {
-                'video_uid': str,
-                'clip_idx': int,
-                'conversation': List[Dict],  # All turns in this clip
-                'dst': List[Dict],           # Global DST steps
-                'embeddings': torch.Tensor,  # Precomputed [num_frames, 2048]
-                'neg_frame_sampling_rate': float,
-                'sample_idx': int,
-            }
         """
         import pickle
         
-        # Lazy load clips on first access
-        clips = self._load_clips()
-        clip = clips[idx]
+        clip = self.clips[idx]
 
         # Use 'id' field which corresponds to the embeddings filename
         clip_id = clip["id"]

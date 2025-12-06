@@ -107,7 +107,7 @@ class SmolVLMWithStrategies(SmolVLMForConditionalGeneration):
         avoiding cache_position issues when using compressed caches.
         
         Args:
-            inputs_embeds: Can be embeddings OR tuple (input_ids, pixel_values, kwargs)
+            inputs_embeds: Tuple (input_ids, pixel_values, kwargs) from joint_embed()
             past_key_values: KV cache from previous generation (tuple format)
             max_length: Maximum tokens to generate
             verbose: Print debug info
@@ -126,13 +126,8 @@ class SmolVLMWithStrategies(SmolVLMForConditionalGeneration):
                 (1, max_length), -100, dtype=torch.long, device=self.device
             )
         
-        # Check if inputs_embeds is actually a tuple from joint_embed
-        use_ids_mode = isinstance(inputs_embeds, tuple)
-        if use_ids_mode:
-            input_ids, pixel_values, extra_kwargs = inputs_embeds
-            first_forward_kwargs = {'input_ids': input_ids, 'pixel_values': pixel_values, **extra_kwargs}
-        else:
-            first_forward_kwargs = {'inputs_embeds': inputs_embeds}
+        # Unpack tuple from joint_embed() - always expect (input_ids, pixel_values, extra_kwargs)
+        input_ids, pixel_values, extra_kwargs = inputs_embeds
         
         # Convert tuple cache to DynamicCache for forward() if needed
         if past_key_values is not None and isinstance(past_key_values, tuple):
@@ -141,27 +136,31 @@ class SmolVLMWithStrategies(SmolVLMForConditionalGeneration):
             cache_for_forward = past_key_values
         
         past_key_values_to_return = None
+        token_idx = 0
         
         for i in range(max_length):
-            # Forward pass with cache
+            # First iteration: use input_ids + pixel_values
+            # Subsequent iterations: use token embeddings
             if i == 0:
-                # First iteration: use input_ids or inputs_embeds
-                outputs = self.forward(
-                    **first_forward_kwargs,
-                    past_key_values=cache_for_forward,
-                    use_cache=True,
-                    return_dict=True,
-                )
+                forward_kwargs = {
+                    'input_ids': input_ids,
+                    'pixel_values': pixel_values,
+                    **extra_kwargs,
+                    'past_key_values': cache_for_forward,
+                    'use_cache': True,
+                    'return_dict': True,
+                }
             else:
-                # Subsequent iterations: use token embeddings
-                outputs = self.forward(
-                    inputs_embeds=inputs_embeds,
-                    past_key_values=cache_for_forward,
-                    use_cache=True,
-                    return_dict=True,
-                )
+                forward_kwargs = {
+                    'inputs_embeds': inputs_embeds,
+                    'past_key_values': cache_for_forward,
+                    'use_cache': True,
+                    'return_dict': True,
+                }
             
-            cache_for_forward = outputs.past_key_values
+            outputs = self.forward(**forward_kwargs)
+            cache_for_forward = outputs.past_key_values if hasattr(outputs, 'past_key_values') else outputs["past_key_values"]
+            logits = outputs.logits if hasattr(outputs, 'logits') else outputs["logits"]
             
             if i == 0:
                 # Store initial cache (convert back to tuple format)
@@ -171,24 +170,25 @@ class SmolVLMWithStrategies(SmolVLMForConditionalGeneration):
                     past_key_values_to_return = cache_for_forward
             
             # Greedy sampling: take argmax
-            new_token_id = outputs.logits[:, -1:].argmax(dim=-1)
+            new_token_id = logits[:, -1:].argmax(dim=-1)
             self.inplace_output_ids[:, i] = new_token_id
+            token_idx = i
             
             if verbose:
                 decoded = self.config.tokenizer.decode(new_token_id[0]) if hasattr(self.config, 'tokenizer') else f"token_{new_token_id.item()}"
                 logger.debug(f"Step {i}: {decoded}")
             
             # Check for EOS
-            if new_token_id == self.config.eos_token_id:
+            if new_token_id.item() == self.config.eos_token_id:
                 break
             
             # Prepare next input (embed the new token)
             inputs_embeds = self.get_input_embeddings()(new_token_id)
         
-        # Return final cache in tuple format
+        # Return final cache in tuple format (convert once at the end)
         if hasattr(cache_for_forward, 'to_legacy_cache'):
             past_key_values_to_return = cache_for_forward.to_legacy_cache()
         else:
             past_key_values_to_return = cache_for_forward
         
-        return self.inplace_output_ids[:, : i + 1], past_key_values_to_return
+        return self.inplace_output_ids[:, : token_idx + 1], past_key_values_to_return

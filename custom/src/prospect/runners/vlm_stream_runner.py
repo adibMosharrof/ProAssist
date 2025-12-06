@@ -18,7 +18,7 @@ from prospect.models import (
     SmolVLMWithStrategies,  # Approach 2: Strategy injection
     CustomSmolVLMProcessor,
 )
-from prospect.runners.cache_manager import KVCacheManager
+from prospect.utils.cache_manager import KVCacheManager
 from prospect.utils.chat_formatter import ChatFormatter
 from prospect.timeline_trace.timeline_trace import BaseTrace
 
