@@ -60,9 +60,11 @@ setup_environment() {
         echo "Sourced: ~/.bash_profile"
     fi
     if [ -f ~/.bashrc ]; then
-        source ~/.bashrc
         echo "Sourced: ~/.bashrc"
     fi
+
+    # Increase WandB service wait time to prevent timeouts (default is 30s)
+    export WANDB_SERVICE_WAIT=300
 
     # Change to project root
     cd "$PROJECT_ROOT"
@@ -87,8 +89,40 @@ run_training() {
     echo "📂 Running from: $(pwd)"
     echo ""
 
-    # Run with accelerate for proper multi-GPU training (uses DistributedDataParallel)
-    $CONDA_ENV_PATH/bin/accelerate launch --mixed_precision=bf16 custom/src/prospect/train/train_dst_proassist.py
+    
+    # --- Unified Execution Logic ---
+
+    # 1. Detect Available GPUs (Works for both Local and SLURM)
+    if [ -n "$CUDA_VISIBLE_DEVICES" ]; then
+        # Count commas + 1 to get number of devices, or just count lines after replacing commas
+        num_gpus=$(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\n' | wc -l)
+        echo "   - CUDA_VISIBLE_DEVICES set. Restricted to $num_gpus GPU(s)."
+    elif command -v nvidia-smi &> /dev/null; then
+        detected_gpus=$(nvidia-smi -L | wc -l)
+        num_gpus=$detected_gpus
+    elif [ -n "$SLURM_GPUS_ON_NODE" ]; then
+        num_gpus=$SLURM_GPUS_ON_NODE
+    else
+        # Default fallback (preserve existing value or default to 1)
+        num_gpus=${num_gpus:-1}
+    fi
+    
+    echo "⚡ Launching training on $num_gpus GPUs..."
+
+    # 2. Configure Accelerate Launch Arguments
+    if [ "$num_gpus" -gt 1 ]; then
+        LAUNCH_ARGS="--multi_gpu --num_processes=$num_gpus"
+        echo "   - Enabled: Multi-GPU DistributedDataParallel"
+    else
+        LAUNCH_ARGS="--num_processes=1"
+        echo "   - Enabled: Single Process Mode"
+    fi
+
+    # 3. Launch Training
+    $CONDA_ENV_PATH/bin/accelerate launch \
+        $LAUNCH_ARGS \
+        --mixed_precision=bf16 \
+        custom/src/prospect/train/train_dst_proassist.py
 }
 
 # --- Main Execution Flow ---

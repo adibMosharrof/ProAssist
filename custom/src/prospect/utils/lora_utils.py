@@ -18,6 +18,7 @@ def get_lora_config(
     lora_dropout: float = 0.05,
     target_modules: Optional[list] = None,
     modules_to_save: Optional[list] = None,
+    bias: str = "none",
 ) -> LoraConfig:
     """Create LoRA configuration.
     
@@ -27,6 +28,7 @@ def get_lora_config(
         lora_dropout: Dropout probability (default: 0.05)
         target_modules: Modules to apply LoRA to (default: all linear layers in LLM)
         modules_to_save: Additional modules to save (e.g., mm_projector, binary heads)
+        bias: How to handle bias ("none", "all", or "lora_only", default: "none")
     
     Returns:
         LoraConfig object
@@ -44,6 +46,7 @@ def get_lora_config(
         lora_alpha=lora_alpha,
         target_modules=target_modules,
         lora_dropout=lora_dropout,
+        bias=bias,
         task_type="CAUSAL_LM",
         modules_to_save=modules_to_save,
     )

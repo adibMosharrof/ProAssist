@@ -12,6 +12,8 @@ Usage:
 import json
 import logging
 import os
+# Fix for Protobuf 3.19+ incompatibility
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 import sys
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -81,7 +83,7 @@ class SigLIPEmbeddingsSaver:
         )
         
         self.encoder = VisualEncoder.from_config(config)
-        self.encoder = self.encoder.to(self.device, torch.float16)
+        self.encoder = self.encoder.to(self.device, torch.bfloat16)
         self.encoder.eval()
         self.encoder.requires_grad_(False)
         
@@ -180,14 +182,14 @@ class SigLIPEmbeddingsSaver:
             batch_frames = frames[batch_start:batch_end]
             
             # Stack frames into batch tensor
-            batch_tensor = torch.stack(batch_frames).to(self.device, torch.float16)
+            batch_tensor = torch.stack(batch_frames).to(self.device, torch.bfloat16)
             
             with torch.no_grad():
                 # Encode with SigLIP -> [batch, seq_len, hidden_dim]
                 embeddings = self.encoder.encode(batch_tensor)
                 # Extract CLS token (first token) -> [batch, hidden_dim]
                 cls_embeddings = embeddings[:, 0, :]
-                all_embeddings.append(cls_embeddings.cpu().half())
+                all_embeddings.append(cls_embeddings.cpu().to(torch.bfloat16))
         
         return torch.cat(all_embeddings, dim=0)
     
@@ -235,7 +237,7 @@ class SigLIPEmbeddingsSaver:
         writer = ArrowWriter(path=str(output_file))
         for i in range(len(embeddings)):
             writer.write({
-                "cls": embeddings[i].numpy(),  # [hidden_dim]
+                "cls": embeddings[i].float().numpy(),  # [hidden_dim]
             })
         writer.finalize()
         

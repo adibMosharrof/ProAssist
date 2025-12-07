@@ -58,10 +58,12 @@ class DSTProAssistCollator:
         tokenizer,
         max_seq_len: int = 4096,
         siglip_features_dir: Path = None,
+        negative_sampling_rate: float = 1.0,
     ):
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
         self.siglip_features_dir = Path(siglip_features_dir) if siglip_features_dir else None
+        self.negative_sampling_rate = negative_sampling_rate
         
         # Get token IDs from tokenizer
         self.img_token_id = tokenizer.convert_tokens_to_ids("<image>")
@@ -106,6 +108,7 @@ class DSTProAssistCollator:
         
         return {
             "input_ids": input_ids,
+            "labels": speaking_gen_labels,  # Required for Trainer to detect labels and extract loss
             "speaking_gen_labels": speaking_gen_labels,
             "dst_gen_labels": dst_gen_labels,
             "speaking_labels": speaking_labels,
@@ -137,7 +140,30 @@ class DSTProAssistCollator:
         # Create event lookup by frame_idx
         events_by_frame = {event["frame_idx"]: event for event in events}
         
-        # Process each frame in the clip
+        # Negative frame subsampling (following ProAssist's approach)
+        all_frames = set(range(start_frame, end_frame))
+        positive_frames = set()
+        
+        # Identify positive frames (frames with speaking=1 or dst_update=1)
+        for event in events:
+            frame_idx = event["frame_idx"]
+            if event.get("speaking", 0) == 1 or event.get("dst_update", 0) == 1:
+                positive_frames.add(frame_idx)
+        
+        # Negative frames = all - positive
+        negative_frames = sorted(list(all_frames - positive_frames))
+        
+        # Sample negative frames based on sampling_rate
+        sampled_negative_frames = set()
+        if negative_frames and self.negative_sampling_rate > 0:
+            if self.negative_sampling_rate >= 1.0:
+                sampled_negative_frames = set(negative_frames)
+            else:
+                import random
+                num_sample = max(int(self.negative_sampling_rate * len(negative_frames)), 1)
+                sampled_negative_frames = set(random.sample(negative_frames, num_sample))
+        
+        # Process ALL frames in the clip
         for frame_idx in range(start_frame, end_frame):
             # Add <image> token
             input_ids.append(self.img_token_id)
@@ -150,15 +176,27 @@ class DSTProAssistCollator:
             dst_update = event.get("dst_update", 0)
             
             # Binary labels at <image> position
-            speaking_labels.append(speaking)
-            dst_labels.append(dst_update)
+            # Positive frames: use actual labels (0 or 1)
+            # Sampled negative frames: use 0
+            # Unsampled negative frames: use -100 (ignore in loss)
+            if frame_idx in positive_frames:
+                # Positive frame - use actual labels
+                speaking_labels.append(speaking)
+                dst_labels.append(dst_update)
+            elif frame_idx in sampled_negative_frames:
+                # Sampled negative frame - explicitly set to 0
+                speaking_labels.append(0)
+                dst_labels.append(0)
+            else:
+                # Unsampled negative frame - ignore in loss
+                speaking_labels.append(-100)
+                dst_labels.append(-100)
             
             # Add DST updates (if any)
             for dst_text in event.get("dst_updates", []):
                 # Tokenize: [DST] S1->start <eos>
-                dst_tokens = self.tokenizer.encode(
-                    f"[DST] {dst_text}",
-                    add_special_tokens=False
+                dst_tokens = [self.dst_token_id] + self.tokenizer.encode(
+                    dst_text, add_special_tokens=False
                 )
                 dst_tokens.append(self.eos_token_id)
                 
@@ -168,13 +206,11 @@ class DSTProAssistCollator:
                 speaking_labels.extend([-100] * len(dst_tokens))
                 dst_labels.extend([-100] * len(dst_tokens))
             
-            # Add assistant response (if any)
-            response = event.get("response")
-            if response:
-                # Tokenize: [ASST] Pick up the screwdriver <eos>
-                resp_tokens = self.tokenizer.encode(
-                    f"[ASST] {response}",
-                    add_special_tokens=False
+            # Add assistant responses (if any)
+            for response in event.get("responses", []):
+                # Tokenize: [ASST] response <eos>
+                resp_tokens = [self.asst_token_id] + self.tokenizer.encode(
+                    response, add_special_tokens=False
                 )
                 resp_tokens.append(self.eos_token_id)
                 
@@ -183,6 +219,7 @@ class DSTProAssistCollator:
                 dst_gen_labels.extend([-100] * len(resp_tokens))  # No DST loss
                 speaking_labels.extend([-100] * len(resp_tokens))
                 dst_labels.extend([-100] * len(resp_tokens))
+        
         
         return input_ids, speaking_gen_labels, dst_gen_labels, speaking_labels, dst_labels
     
@@ -208,6 +245,7 @@ class DSTProAssistCollator:
         if not arrow_path.exists():
             raise FileNotFoundError(f"SigLIP features not found: {arrow_path}")
         
+        
         # Load from arrow file
         dataset = hf_datasets.Dataset.from_file(str(arrow_path))
         
@@ -215,7 +253,7 @@ class DSTProAssistCollator:
         embeddings = []
         for i in range(len(dataset)):
             cls_embed = dataset[i]["cls"]  # [1152]
-            embeddings.append(torch.tensor(cls_embed, dtype=torch.float32))
+            embeddings.append(torch.tensor(cls_embed, dtype=torch.bfloat16))
         
         # Stack into [num_frames, 1152]
         return torch.stack(embeddings, dim=0)

@@ -11,12 +11,12 @@ model:
 
 # Processing configuration  
 processing:
-  batch_size: 512
+  batch_size: 430
   frames_root: "data/proassist/processed_data"  # Frames at {frames_root}/{dataset_name}/frames
 
 # Dataset configuration
 dataset:
-  output_dir: ${project_root}/custom/outputs/dst_generated/sparse_format/2025-12-06/05-27-35_gpt-4o_proassist_sparse
+  output_dir: ${project_root}/custom/outputs/dst_generated/sparse_format/2025-12-06/14-13-11_gpt-4o_proassist_sparse
   names:
     - assembly101
 

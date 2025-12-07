@@ -80,7 +80,11 @@ class DSTProActModelMixin(AutoModelForCausalLM):
                 - List of tensors, each [num_frames_i, hidden_size]
         """
         clamped_input_ids = input_ids.clamp(max=self.config.vocab_size - 1)
-        inputs_embeds = self.get_input_embeddings()(clamped_input_ids)
+        inputs_embeds = self.get_input_embeddings()(clamped_input_ids).clone()
+        
+        # Convert to model dtype (bfloat16) for mixed precision training
+        # Embedding lookup is done in float32, but all subsequent ops use bfloat16
+        inputs_embeds = inputs_embeds.to(torch.bfloat16)
         
         if image_embeds is None:
             return inputs_embeds
@@ -93,7 +97,7 @@ class DSTProActModelMixin(AutoModelForCausalLM):
                 raise ValueError("img_token_id not set in config")
             
             for batch_idx, sample_embeds in enumerate(image_embeds):
-                # Project embeddings for this sample
+                # Project embeddings for this sample (already bfloat16 from collator)
                 projected = self.mm_feature_proj(sample_embeds.to(self.dtype))  # [num_frames, hidden_size]
                 
                 # Find image token positions for this sample
@@ -110,6 +114,7 @@ class DSTProActModelMixin(AutoModelForCausalLM):
         
         # Handle single tensor (original behavior)
         projected_embeds = self.mm_feature_proj(image_embeds.to(self.dtype))
+        
         if projected_embeds.dim() == 3:
             projected_embeds = projected_embeds.flatten(0, 1)
         
@@ -300,7 +305,7 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
                 from sklearn.metrics import balanced_accuracy_score, precision_recall_fscore_support
                 
                 # Balanced accuracy
-                log_dict["speaking_accuracy"] = float(balanced_accuracy_score(targets, preds))
+                log_dict["speaking_balanced_accuracy"] = float(balanced_accuracy_score(targets, preds))
                 
                 # Precision, Recall, F1 (zero_division=0 handles edge cases)
                 precision, recall, f1, _ = precision_recall_fscore_support(
@@ -325,7 +330,7 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
                 from sklearn.metrics import balanced_accuracy_score, precision_recall_fscore_support
                 
                 # Balanced accuracy
-                log_dict["dst_accuracy"] = float(balanced_accuracy_score(targets, preds))
+                log_dict["dst_balanced_accuracy"] = float(balanced_accuracy_score(targets, preds))
                 
                 # Precision, Recall, F1 (zero_division=0 handles edge cases)
                 precision, recall, f1, _ = precision_recall_fscore_support(
@@ -337,19 +342,21 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
         
         
         
-        # Return new output object with loss (outputs is a frozen dataclass, can't modify in-place)
-        output = CausalLMOutputWithPast(
-            loss=loss,
-            logits=outputs.logits,
-            past_key_values=outputs.past_key_values,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
+        # Convert output to dict and add metrics directly (following DST SmolVLM pattern)
+        output_dict = {
+            "loss": loss,
+            "logits": outputs.logits,
+            "past_key_values": outputs.past_key_values,
+            "hidden_states": outputs.hidden_states,
+            "attentions": outputs.attentions,
+            "speaking_logits": outputs.speaking_logits if hasattr(outputs, 'speaking_logits') else None,
+            "dst_update_logits": outputs.dst_update_logits if hasattr(outputs, 'dst_update_logits') else None,
+        }
         
-        # Attach log_dict as attribute for trainer to access metrics
-        output.log_dict = log_dict
+        # Add all metrics directly to the output dict
+        output_dict.update(log_dict)
         
-        return output
+        return output_dict
 
 
 def trim_past_key_values(past_key_values: KV_CACHE, start: int, stop: int, batch_idx: int = -1) -> KV_CACHE:

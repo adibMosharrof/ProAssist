@@ -22,6 +22,8 @@ from accelerate import Accelerator
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from transformers import AutoTokenizer, TrainingArguments, BitsAndBytesConfig
+from peft import prepare_model_for_kbit_training
+import wandb
 
 from prospect.models.dst_proact import DSTProActLlamaConfig, DSTProActLlamaForCausalLM
 from prospect.train.dst_proassist_trainer import DSTProAssistTrainer
@@ -73,6 +75,7 @@ class DataConfig:
     data_dir: str = "custom/outputs/dst_generated/sparse_format/2025-12-06/05-27-35_gpt-4o_proassist_sparse"
     dataset_name: str = "assembly101"
     siglip_features_dir: str = None  # Will be set to data_dir if None
+    negative_sampling_rate: float = 1.0  # Rate for negative frame subsampling (1.0 = all, 0.5 = 50%)
 
 
 class DSTProAssistTraining:
@@ -176,7 +179,16 @@ class DSTProAssistTraining:
         
         if quantization_config is not None:
             load_kwargs["quantization_config"] = quantization_config
-            load_kwargs["device_map"] = "auto"  # Required for quantization
+            load_kwargs["torch_dtype"] = torch.bfloat16  # Force BF16 for non-quantized layers
+            
+            # For distributed training with quantization, we must map to specific device
+            from accelerate import Accelerator
+            accelerator = Accelerator()
+            if accelerator.num_processes > 1:
+                # Map entire model to the current process's device
+                load_kwargs["device_map"] = {"": accelerator.local_process_index}
+            else:
+                load_kwargs["device_map"] = "auto"
         else:
             load_kwargs["torch_dtype"] = torch.bfloat16
         
@@ -217,7 +229,15 @@ class DSTProAssistTraining:
         # Set pad token
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
-        
+        # Prepare for kbit training if enabled (Critical for QLoRA stability)
+        if model_cfg.use_int4_quantization:
+            self.model = prepare_model_for_kbit_training(
+                self.model, 
+                use_gradient_checkpointing=self.cfg.training.get("gradient_checkpointing", False),
+                gradient_checkpointing_kwargs={"use_reentrant": False}
+            )
+            self.logger.info("✓ Prepared model for k-bit training")
+
         # Apply LoRA if enabled
         if lora_cfg.use_lora:
             self.logger.info("Applying LoRA to model...")
@@ -233,15 +253,28 @@ class DSTProAssistTraining:
                 modules_to_save=modules_to_save,
             )
             self.model = apply_lora_to_model(self.model, lora_config)
+            
+            # Verify trainable parameters
+            self.logger.info("✓ LoRA applied successfully")
+            print_trainable_parameters(self.model)
         else:
             # Freeze base model, train only multimodal modules
-            self.logger.info("Freezing base LLM, training only multimodal modules...")
+            self.logger.info("🔒 Freezing base LLM, training only multimodal modules...")
             self.model.requires_grad_(False)
-            self.model.mm_projector.requires_grad_(True)
-            if self.model.speaking_decision_head is not None:
+            
+            # Enable gradients for custom modules
+            if hasattr(self.model, 'mm_projector') and self.model.mm_projector is not None:
+                self.model.mm_projector.requires_grad_(True)
+                self.logger.info("  ├─ mm_projector: trainable")
+            
+            if hasattr(self.model, 'speaking_decision_head') and self.model.speaking_decision_head is not None:
                 self.model.speaking_decision_head.requires_grad_(True)
-            if self.model.dst_update_head is not None:
+                self.logger.info("  ├─ speaking_decision_head: trainable")
+            
+            if hasattr(self.model, 'dst_update_head') and self.model.dst_update_head is not None:
                 self.model.dst_update_head.requires_grad_(True)
+                self.logger.info("  └─ dst_update_head: trainable")
+            
             print_trainable_parameters(self.model)
 
     def _setup_datasets(self, data_cfg: DataConfig):
@@ -268,6 +301,7 @@ class DSTProAssistTraining:
             tokenizer=self.tokenizer,
             max_seq_len=model_cfg.max_seq_len,
             siglip_features_dir=Path(data_cfg.siglip_features_dir),
+            negative_sampling_rate=data_cfg.negative_sampling_rate,
         )
         self.logger.info("✓ Created collator")
 
@@ -372,8 +406,12 @@ _config_dir = _script_dir.parent.parent.parent / "config" / "training"
 @hydra.main(version_base=None, config_path=str(_config_dir), config_name="dst_proassist_training")
 def main(cfg: DictConfig):
     """Main training function."""
-    trainer = DSTProAssistTraining(cfg)
-    trainer.run()
+    try:
+        trainer = DSTProAssistTraining(cfg)
+        trainer.run()
+    finally:
+        if wandb.run is not None:
+            wandb.finish()
 
 
 if __name__ == "__main__":

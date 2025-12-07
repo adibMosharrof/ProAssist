@@ -80,6 +80,7 @@ setup_environment() {
     # 2. Project Setup
     cd "$PROJECT_ROOT"
     export PYTHONPATH="$PROJECT_ROOT/custom/src:${PYTHONPATH:-}"
+    export WANDB_DISABLED=true
     
     echo "✅ Active Python: $(which python)"
     echo "📦 PYTHONPATH: $PYTHONPATH"
@@ -94,8 +95,26 @@ run_siglip_embeddings() {
     echo "📁 Project root: $PROJECT_ROOT"
     echo ""
 
-    # Run the SigLIP embeddings saver with project_root override
-    python -m dst_data_builder.siglip_embeddings_saver project_root=$PROJECT_ROOT
+    # Detect number of GPUs if not already set (e.g. invalid in local run)
+    if [ -z "$num_gpus" ]; then
+        if command -v nvidia-smi &> /dev/null; then
+            num_gpus=$(nvidia-smi -L | wc -l)
+            echo "🔍 Detected $num_gpus local GPUs"
+        else
+            num_gpus=1
+            echo "⚠️  nvidia-smi not found, defaulting to 1 GPU"
+        fi
+    fi
+
+    echo "⚡ Launching with torchrun on $num_gpus GPUs..."
+
+    # Launch with torchrun using a random port to avoid conflicts
+    torchrun \
+        --nproc_per_node=$num_gpus \
+        --master_port=$(expr 10000 + $RANDOM % 20000) \
+        -m custom.src.dst_data_builder.siglip_embeddings_saver \
+        hydra.run.dir="$OUTPUT_DIR" \
+        project_root="$PROJECT_ROOT"
 
     echo ""
     echo "✅ SigLIP embeddings extraction completed successfully!"

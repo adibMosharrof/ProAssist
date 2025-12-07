@@ -56,11 +56,11 @@ class DSTProAssistTrainer(Trainer):
         # Forward pass through model - model computes all losses
         outputs = model(**inputs)
 
-        # Get the combined loss from model (outputs is a ModelOutput object, not a dict)
-        loss = outputs.loss if hasattr(outputs, 'loss') else None
+        # Get the combined loss from model
+        loss = outputs.loss if hasattr(outputs, 'loss') else outputs.get("loss", None)
 
-        # Extract and buffer metrics if present
-        if hasattr(outputs, 'log_dict') and outputs.log_dict:
+        # Extract and buffer metrics if present (following DST SmolVLM pattern)
+        if isinstance(outputs, dict):
             # Determine which buffer to use
             metrics_buffer = self.training_metrics if model.training else self.eval_metrics
             
@@ -68,24 +68,19 @@ class DSTProAssistTrainer(Trainer):
             metric_names = [
                 "speaking_gen_loss", "dst_gen_loss",
                 "speaking_binary_loss", "dst_binary_loss",
-                "speaking_accuracy", "speaking_precision", "speaking_recall", "speaking_f1",
-                "dst_accuracy", "dst_precision", "dst_recall", "dst_f1"
+                "speaking_balanced_accuracy", "speaking_precision", "speaking_recall", "speaking_f1",
+                "dst_balanced_accuracy", "dst_precision", "dst_recall", "dst_f1"
             ]
             
             for metric in metric_names:
-                if metric in outputs.log_dict and outputs.log_dict[metric] is not None:
+                if metric in outputs and outputs[metric] is not None:
                     if metric not in metrics_buffer:
                         metrics_buffer[metric] = []
                     # Handle both tensor and scalar values
-                    value = outputs.log_dict[metric]
+                    value = outputs[metric]
                     if isinstance(value, torch.Tensor):
                         value = value.item()
                     metrics_buffer[metric].append(value)
-            
-            # Debug: Print what metrics were found
-            if outputs.log_dict:
-                self.logger.info(f"DEBUG: log_dict keys: {list(outputs.log_dict.keys())}")
-                self.logger.info(f"DEBUG: metrics_buffer keys: {list(metrics_buffer.keys())}")
 
         return (loss, outputs) if return_outputs else loss
 
@@ -95,32 +90,20 @@ class DSTProAssistTrainer(Trainer):
         Injects buffered metrics into logs.
         """
         # Determine log type
-        is_eval_log = any(k.startswith("eval_") for k in logs.keys())
+        is_training = "loss" in logs and "eval_loss" not in logs
+        metrics_buffer = self.training_metrics if is_training else self.eval_metrics
         
-        # Inject averaged metrics from buffer (ONLY for training logs)
-        if self.training_metrics and not is_eval_log:
-            for metric_name, values in self.training_metrics.items():
+        # Average and inject buffered metrics
+        if metrics_buffer:
+            for metric_name, values in metrics_buffer.items():
                 if values:
-                    # Prefix with train_
-                    logs[f"train_{metric_name}"] = sum(values) / len(values)
+                    avg_value = sum(values) / len(values)
+                    # Add prefix for clarity
+                    prefix = "train_" if is_training else "eval_"
+                    logs[f"{prefix}{metric_name}"] = avg_value
             
             # Clear buffer after logging
-            self.training_metrics = {}
-
-        # Inject averaged metrics from eval buffer (ONLY for eval logs)
-        if self.eval_metrics and is_eval_log:
-            # Infer prefix from existing logs (e.g. 'eval_loss' -> 'eval')
-            prefix = "eval"
-            for key in logs.keys():
-                if key.endswith("_loss") and key != "loss" and key != "total_loss":
-                    prefix = key.rsplit("_loss", 1)[0]
-                    break
-            
-            for metric_name, values in self.eval_metrics.items():
-                if values:
-                    logs[f"{prefix}_{metric_name}"] = sum(values) / len(values)
-            
-            # Clear buffer after logging
-            self.eval_metrics = {}
-            
+            metrics_buffer.clear()
+        
+        # Call parent to handle actual logging
         super().log(logs, *args, **kwargs)
