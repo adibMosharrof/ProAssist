@@ -32,6 +32,7 @@ class EventFrame:
     dst_update: int = 0
     dst_updates: List[str] = field(default_factory=list)
     response: Optional[str] = None
+    system_instruction: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -40,6 +41,7 @@ class EventFrame:
             "dst_update": self.dst_update,
             "dst_updates": self.dst_updates,
             "response": self.response,
+            "system_instruction": self.system_instruction,
         }
     
     def estimate_tokens(self, tokenizer) -> int:
@@ -50,6 +52,8 @@ class EventFrame:
                 tokens += len(tokenizer.encode(f"[DST] {update}", add_special_tokens=False))
         if self.response:
             tokens += len(tokenizer.encode(f"[ASST] {self.response}", add_special_tokens=False))
+        if self.system_instruction:
+            tokens += len(tokenizer.encode(self.system_instruction, add_special_tokens=False))
         return tokens
 
 
@@ -78,9 +82,9 @@ class SparseSequenceGenerator(SimpleDSTGenerator):
     
     def convert_to_sparse_format(self, training_sample: dict) -> dict:
         """
-        Convert training sample to sparse event format.
+        Prepare training sample with conversation preserved.
         
-        Only stores frames with events (DST_UPDATE or assistant response).
+        Calculates clip boundaries but keeps original conversation structure.
         """
         conversation = training_sample.get("conversation", [])
         
@@ -94,70 +98,45 @@ class SparseSequenceGenerator(SimpleDSTGenerator):
                 all_end_frames.append(turn["end_frame"])
         
         if not all_start_frames or not all_end_frames:
-            training_sample.pop("conversation", None)
+            # Handle empty conversation
             training_sample["start_frame"] = 0
             training_sample["end_frame"] = 0
-            training_sample["events"] = []
             return training_sample
         
         min_frame = min(all_start_frames)
         max_frame = max(all_end_frames)
         
-        # Build sparse event data
-        frame_events: Dict[int, EventFrame] = {}
+        # Add clip boundaries
+        training_sample["start_frame"] = min_frame
+        training_sample["end_frame"] = max_frame
+        training_sample["num_total_frames"] = max_frame - min_frame + 1
+        
+        # Inject speaking and dst_update flags into conversation turns
+        speaking_count = 0
+        dst_update_count = 0
+        event_frames = set()
         
         for turn in conversation:
             role = turn.get("role", "")
             start_frame = turn.get("start_frame", 0)
             
-            if role == "DST_UPDATE":
-                if start_frame not in frame_events:
-                    frame_events[start_frame] = EventFrame(frame_idx=start_frame)
-                frame_events[start_frame].dst_update = 1
-                
-                # Format DST content
-                content = turn.get("content", [])
-                if isinstance(content, list):
-                    for item in content:
-                        if isinstance(item, dict):
-                            step_id = item.get("id", "")
-                            transition = item.get("transition", "")
-                            dst_text = f"{step_id}->{transition}"
-                            frame_events[start_frame].dst_updates.append(dst_text)
-                elif isinstance(content, str):
-                    frame_events[start_frame].dst_updates.append(content)
-            
-            elif role == "assistant":
-                if start_frame not in frame_events:
-                    frame_events[start_frame] = EventFrame(frame_idx=start_frame)
-                frame_events[start_frame].speaking = 1
-                content = turn.get("content", "")
-                if content:
-                    if frame_events[start_frame].response:
-                        frame_events[start_frame].response += " " + content
-                    else:
-                        frame_events[start_frame].response = content
+            if role == "assistant":
+                turn["speaking"] = 1
+                turn["dst_update"] = 0
+                speaking_count += 1
+                event_frames.add(start_frame)
+            elif role == "DST_UPDATE":
+                turn["speaking"] = 0
+                turn["dst_update"] = 1
+                dst_update_count += 1
+                event_frames.add(start_frame)
+            else:
+                turn["speaking"] = 0
+                turn["dst_update"] = 0
         
-        # Sort by frame index
-        events_list = [frame_events[idx].to_dict() for idx in sorted(frame_events.keys())]
-        
-        # Remove conversation and other unused fields
-        training_sample.pop("conversation", None)
-        training_sample.pop("_dst_transitions", None)
-        training_sample.pop("dst_state_history", None)
-        training_sample.pop("parsed_video_anns", None)
-        training_sample.pop("gen_args", None)
-        training_sample.pop("video_labels", None)
-        training_sample.pop("metadata", None)
-        
-        # Add sparse format fields
-        training_sample["start_frame"] = min_frame
-        training_sample["end_frame"] = max_frame
-        training_sample["events"] = events_list
-        training_sample["num_total_frames"] = max_frame - min_frame + 1
-        training_sample["num_event_frames"] = len(events_list)
-        training_sample["speaking_frames"] = sum(1 for e in events_list if e["speaking"])
-        training_sample["dst_update_frames"] = sum(1 for e in events_list if e["dst_update"])
+        training_sample["num_event_frames"] = len(event_frames)
+        training_sample["speaking_frames"] = speaking_count
+        training_sample["dst_update_frames"] = dst_update_count
         
         return training_sample
 

@@ -107,8 +107,8 @@ class DSTProAssistTraining:
         stdout_file = self.output_dir / "training_stdout.log"
         stderr_file = self.output_dir / "training_stderr.log"
         
-        sys.stdout = Tee(open(stdout_file, 'w'), sys.stdout)
-        sys.stderr = Tee(open(stderr_file, 'w'), sys.stderr)
+        # sys.stdout = Tee(open(stdout_file, 'w'), sys.stdout)
+        # sys.stderr = Tee(open(stderr_file, 'w'), sys.stderr)
         
         self.logger.info(f"✓ Output directory: {self.output_dir}")
         self.logger.info(f"✓ Logging stdout to: {stdout_file}")

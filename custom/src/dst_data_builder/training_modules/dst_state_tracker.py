@@ -58,6 +58,19 @@ class DSTStateTracker:
         # Store transitions for later use
         video_data["_dst_transitions"] = dst_transitions
         video_data["_dst_state_history"] = self._build_state_history(dst_transitions)
+        
+        # Extract all unique steps from the conversation
+        all_steps = set()
+        for turn in conversation:
+            if turn.get("role") == "DST_UPDATE":
+                content = turn.get("content", [])
+                if isinstance(content, list):
+                    for item in content:
+                        if isinstance(item, dict):
+                            step_id = item.get("id")
+                            if step_id:
+                                all_steps.add(step_id)
+        video_data["_all_steps"] = list(all_steps)
 
         self.logger.debug(f"Tracked {len(dst_transitions)} DST transitions")
         return video_data
@@ -240,8 +253,8 @@ class DSTStateTracker:
             Updated segment data with initial DST state
         """
         # For first segment, no initial state needed
-        if segment_index == 0:
-            return segment_data
+        # if segment_index == 0:
+        #     return segment_data
 
         # Get conversation and estimate split point
         conversation = segment_data.get("conversation", [])
@@ -258,7 +271,7 @@ class DSTStateTracker:
         if dst_transitions:
             # Calculate state based on transitions in this segment
             initial_state = self._calculate_state_from_transitions(
-                dst_transitions, segment_index
+                dst_transitions, segment_index, segment_data.get("_all_steps", [])
             )
         else:
             # Fallback: look for initial state in metadata
@@ -274,10 +287,10 @@ class DSTStateTracker:
         # Optionally add to system prompt if present
         if conversation and conversation[0].get("role") == "system":
             system_content = conversation[0].get("content", "")
-            if "Dialogue Context:" not in system_content and initial_state:
+            if "Dialogue State:" not in system_content and initial_state:
                 dst_context = self._format_dst_state_context(initial_state)
                 updated_content = (
-                    system_content + f"\n\nDialogue Context:\n{dst_context}"
+                    system_content + f"\n\nDialogue State:\n{dst_context}"
                 )
                 conversation[0]["content"] = updated_content
 
@@ -287,7 +300,7 @@ class DSTStateTracker:
         return segment_data
 
     def _calculate_state_from_transitions(
-        self, transitions: List[Dict[str, Any]], segment_index: int
+        self, transitions: List[Dict[str, Any]], segment_index: int, all_steps: List[str] = None
     ) -> Dict[str, str]:
         """
         Calculate initial state for a segment based on its transitions
@@ -316,8 +329,12 @@ class DSTStateTracker:
                 state[step_id] = "completed"
 
         # Fill in missing steps as not_started
-        all_steps = set(t["step_id"] for t in transitions)
-        for step_id in all_steps:
+        if all_steps:
+            steps_to_check = set(all_steps)
+        else:
+            steps_to_check = set(t["step_id"] for t in transitions)
+            
+        for step_id in steps_to_check:
             if step_id not in state:
                 state[step_id] = "not_started"
 
@@ -447,7 +464,10 @@ class DSTStateTracker:
             return "No previous dialogue state."
 
         state_parts = []
-        for step_id, state in dst_state.items():
+        # Sort steps alphanumerically (S1, S2, ..., S10)
+        sorted_steps = sorted(dst_state.items(), key=lambda x: (int(x[0][1:]) if x[0][1:].isdigit() else x[0]))
+        
+        for step_id, state in sorted_steps:
             state_parts.append(f"Step {step_id}: {state}")
 
         return "Current step states - " + ", ".join(state_parts)
