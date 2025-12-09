@@ -290,6 +290,7 @@ class DSTProAssistTraining:
                 self.datasets[split] = self.DSTProAssistDataset(
                     data_path=str(json_path),
                     dataset_name=data_cfg.dataset_name,
+                    siglip_features_dir=data_cfg.siglip_features_dir,
                 )
                 self.logger.info(f"✓ Loaded {len(self.datasets[split])} {split} samples")
             else:
