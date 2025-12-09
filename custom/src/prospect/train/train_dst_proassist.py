@@ -325,7 +325,7 @@ class DSTProAssistTraining:
             eval_strategy="steps" if "val" in self.datasets else "no",
             save_strategy="steps",
             save_total_limit=self.cfg.training.save_total_limit,
-            load_best_model_at_end=True if "val" in self.datasets else False,
+            load_best_model_at_end=False,
             metric_for_best_model="eval_loss" if "val" in self.datasets else None,
             bf16=self.cfg.training.bf16,
             fp16=self.cfg.training.fp16,
