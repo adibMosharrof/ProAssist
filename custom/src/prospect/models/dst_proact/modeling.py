@@ -157,8 +157,8 @@ class DSTProActModelMixin(AutoModelForCausalLM):
                 output_hidden_states=output_hidden_states if i == 0 else False,
                 return_dict=True,
             )
-            past_key_values = outputs.past_key_values
-            new_token_id = outputs.logits[:, -1:].argmax(dim=-1)
+            past_key_values = outputs["past_key_values"]
+            new_token_id = outputs["logits"][:, -1:].argmax(dim=-1)
             self.inplace_output_ids[:, i] = new_token_id
             token_idx = i
             

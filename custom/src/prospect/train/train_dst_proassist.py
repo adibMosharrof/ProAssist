@@ -333,6 +333,7 @@ class DSTProAssistTraining:
                 self.datasets[split] = self.DSTProAssistDataset(
                     data_path=str(json_path),
                     dataset_name=data_cfg.dataset_name,
+                    siglip_features_dir=data_cfg.siglip_features_dir,
                 )
                 self.logger.info(
                     f"✓ Loaded {len(self.datasets[split])} {split} samples"
@@ -369,7 +370,7 @@ class DSTProAssistTraining:
             eval_strategy="steps" if "val" in self.datasets else "no",
             save_strategy="steps",
             save_total_limit=self.cfg.training.save_total_limit,
-            load_best_model_at_end=True if "val" in self.datasets else False,
+            load_best_model_at_end=False,
             metric_for_best_model="eval_loss" if "val" in self.datasets else None,
             bf16=self.cfg.training.bf16,
             fp16=self.cfg.training.fp16,

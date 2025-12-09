@@ -45,12 +45,14 @@ class DSTProAssistDataset(Dataset):
         self,
         data_path: str,
         dataset_name: str = "assembly101",
+        siglip_features_dir: str = None,
     ):
         """Initialize dataset.
         
         Args:
             data_path: Path to JSON file with DST ProAssist data
             dataset_name: Name of dataset (for embedding path construction)
+            siglip_features_dir: Path to directory containing SigLIP features (optional filtering)
         """
         self.data_path = Path(data_path)
         self.dataset_name = dataset_name
@@ -58,7 +60,29 @@ class DSTProAssistDataset(Dataset):
         # Load data
         logger.info(f"Loading DST ProAssist data from {self.data_path}")
         with open(self.data_path, "r") as f:
-            self.data = json.load(f)
+            raw_data = json.load(f)
+            
+        # Filter data if siglip_features_dir is provided
+        if siglip_features_dir:
+            self.data = []
+            features_dir = Path(siglip_features_dir)
+            logger.info(f"Filtering samples based on feature existence in {features_dir}")
+            
+            missing_count = 0
+            for sample in raw_data:
+                clip_id = sample.get("id") or sample.get("video_uid")
+                # Construct path to .arrow file (matching collator logic)
+                arrow_path = features_dir / dataset_name / "siglip_features" / f"{clip_id}.arrow"
+                
+                if arrow_path.exists():
+                    self.data.append(sample)
+                else:
+                    missing_count += 1
+            
+            if missing_count > 0:
+                logger.warning(f"⚠ Skipped {missing_count} samples due to missing SigLIP features")
+        else:
+            self.data = raw_data
         
         logger.info(f"Loaded {len(self.data)} clips from {self.data_path}")
     
