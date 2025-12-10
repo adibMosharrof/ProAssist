@@ -118,14 +118,14 @@ class DSTProAssistTraining:
         # Load dataset and collator modules
         self._load_data_modules()
 
+        hydra_cfg = HydraConfig.get()
+        self.output_dir = Path(hydra_cfg.runtime.output_dir)
         # Setup logging to files
         # self._setup_logging()
 
     def _setup_logging(self):
         """Setup stdout/stderr logging to files using Tee class."""
         # Get Hydra output directory
-        hydra_cfg = HydraConfig.get()
-        self.output_dir = Path(hydra_cfg.runtime.output_dir)
 
         # Redirect stdout and stderr to files using Tee class
         stdout_file = self.output_dir / "training_stdout.log"
