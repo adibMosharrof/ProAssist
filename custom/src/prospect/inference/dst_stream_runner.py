@@ -95,6 +95,7 @@ class DSTStreamRunner:
         import sys
         from tqdm import tqdm
         for frame_idx in tqdm(range(len(embeddings)), desc=f"Worker {self.worker_id} Frames", leave=False, file=sys.__stderr__, position=self.worker_id):
+        # for frame_idx in tqdm(range(400), desc=f"Worker {self.worker_id} Frames", leave=False, file=sys.__stderr__, position=self.worker_id):
             # 1. Prepare Input
             frame_embed = embeddings[frame_idx].unsqueeze(0).unsqueeze(0) # [1, 1, 2048]
             
@@ -134,8 +135,8 @@ class DSTStreamRunner:
             if frame_idx % 50 == 0 and frame_idx > 0:
                 logger.debug(f"Frame {frame_idx}: KV cache length = {cache_len} tokens")
             
-            # Get binary head decisions from model outputs (use getattr for CausalLMOutputWithPast)
-            dst_logits = getattr(model_outputs, 'dst_update_logits', None)
+            # Get binary head decisions from model outputs dictionary
+            dst_logits = model_outputs.get('dst_update_logits', None)
             if dst_logits is not None:
                 dst_prob = torch.sigmoid(dst_logits[:, -1])
                 dst_update_triggered = dst_prob > self.dst_threshold
@@ -160,14 +161,14 @@ class DSTStreamRunner:
                 dst_state = self._update_state(dst_state, dst_text)
 
             # 6. Check Speaking Decision
-            speaking_logits = getattr(model_outputs, 'speaking_logits', None)
+            speaking_logits = model_outputs.get('speaking_logits', None)
             if speaking_logits is not None:
                 speaking_prob = torch.sigmoid(speaking_logits[:, -1])
                 speaking_triggered = speaking_prob > self.speaking_threshold
             else:
                 speaking_triggered = False
             
-            gen_text = None
+            gen_text = ""  # Default to empty string (no-talk sentinel)
             if speaking_triggered:
                 stats["speaking_triggered"] += 1
                 # Generate assistant response (longer, use max_length=50)
@@ -184,8 +185,12 @@ class DSTStreamRunner:
                 self.cache_manager.update_cache(kv_cache)
             
             # 6. Get Ground Truth References
-            ref_speaking = self._get_reference_text(conversation, frame_idx + clip_start_frame, "assistant")
-            ref_dst_update = self._get_reference_text(conversation, frame_idx + clip_start_frame, "DST_UPDATE")
+            # Use frame_idx directly since conversation events are relative to clip start
+            # Default to empty string (no-talk sentinel) if no reference text found
+            ref_speaking = self._get_reference_text(conversation, frame_idx, "assistant")
+            if ref_speaking is None:
+                ref_speaking = ""
+            ref_dst_update = self._get_reference_text(conversation, frame_idx, "DST_UPDATE")
 
             # 7. Store Output
             outputs.append(DSTFrameOutput(
@@ -270,6 +275,10 @@ class DSTStreamRunner:
             state = current_state.get(step_id, "not_started")
             lines.append(f"- {step_id}: {step_name} ({state})")
             
-        state_str = ", ".join([f"{k}:{v}" for k, v in current_state.items()])
-        lines.append(f"\nDialogue Context:\nCurrent step states - {state_str}")
+        # Sort steps alphanumerically for consistent state string
+        sorted_state = sorted(current_state.items(), key=lambda x: (int(x[0][1:]) if x[0][1:].isdigit() else x[0]))
+        state_parts = [f"Step {k}: {v}" for k, v in sorted_state]
+        state_str = ", ".join(state_parts)
+        
+        lines.append(f"\nDialogue State:\nCurrent step states - {state_str}")
         return "\n".join(lines)

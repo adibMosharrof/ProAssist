@@ -649,8 +649,20 @@ class ConversationSplitter:
                                     dst_state[step_id] = "completed"
 
         # Fill in missing steps as not_started
-        for step_id in dst_state:
-            if dst_state[step_id] not in ["in_progress", "completed"]:
+        # Find all steps in the full conversation
+        all_steps = set()
+        for turn in full_conversation:
+            if turn.get("role") == "DST_UPDATE":
+                content = turn.get("content", [])
+                if isinstance(content, list):
+                    for item in content:
+                        if isinstance(item, dict):
+                            step_id = item.get("id")
+                            if step_id:
+                                all_steps.add(step_id)
+                                
+        for step_id in all_steps:
+            if step_id not in dst_state:
                 dst_state[step_id] = "not_started"
 
         self.logger.debug(f"DST state at split point {split_point}: {dst_state}")
@@ -674,8 +686,8 @@ class ConversationSplitter:
         clip_idx = segment_data.get("clip_idx", 0)
 
         # For first clip, no initial state needed
-        if clip_idx == 0:
-            return segment_data
+        # if clip_idx == 0:
+        #     return segment_data
 
         # Try to get initial state from segment data first (set during splitting)
         initial_dst_state = segment_data.get("initial_dst_state", {})
@@ -707,10 +719,10 @@ class ConversationSplitter:
         conversation = segment_data.get("conversation", [])
         if conversation and conversation[0].get("role") == "system":
             system_content = conversation[0].get("content", "")
-            if "Dialogue Context:" not in system_content and initial_dst_state:
+            if "Dialogue State:" not in system_content and initial_dst_state:
                 dst_context = self._format_dst_state_context(initial_dst_state)
                 updated_content = (
-                    system_content + f"\n\nDialogue Context:\n{dst_context}"
+                    system_content + f"\n\nDialogue State:\n{dst_context}"
                 )
                 conversation[0]["content"] = updated_content
 
@@ -768,7 +780,10 @@ class ConversationSplitter:
             return "No previous dialogue state."
 
         state_parts = []
-        for step_id, state in dst_state.items():
+        # Sort steps alphanumerically (S1, S2, ..., S10)
+        sorted_steps = sorted(dst_state.items(), key=lambda x: (int(x[0][1:]) if x[0][1:].isdigit() else x[0]))
+        
+        for step_id, state in sorted_steps:
             state_parts.append(f"Step {step_id}: {state}")
 
         return "Current step states - " + ", ".join(state_parts)

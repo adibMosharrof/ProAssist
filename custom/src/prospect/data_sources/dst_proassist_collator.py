@@ -88,7 +88,7 @@ class DSTProAssistCollator:
         for sample in samples:
             # Build continuous sequence from events
             input_ids, speaking_gen_labels, dst_gen_labels, speaking_labels, dst_labels = self._build_sequence(sample)
-            
+                
             # Load SigLIP embeddings
             embeddings = self._load_embeddings(sample)
             
@@ -117,7 +117,7 @@ class DSTProAssistCollator:
         }
     
     def _build_sequence(self, sample: Dict[str, Any]):
-        """Build continuous sequence from events.
+        """Build continuous sequence from conversation.
         
         For each frame in [start_frame, end_frame):
         1. Add <image> token
@@ -135,20 +135,60 @@ class DSTProAssistCollator:
         
         start_frame = sample["start_frame"]
         end_frame = sample["end_frame"]
-        events = sample.get("events", [])
+        conversation = sample.get("conversation", [])
         
-        # Create event lookup by frame_idx
-        events_by_frame = {event["frame_idx"]: event for event in events}
+        # Parse conversation into events by frame
+        events_by_frame = {}
+        
+        for turn in conversation:
+            role = turn.get("role", "")
+            turn_start = turn.get("start_frame", 0)
+            
+            # Initialize event for this frame if needed
+            if turn_start not in events_by_frame:
+                events_by_frame[turn_start] = {
+                    "speaking": 0,
+                    "dst_update": 0,
+                    "dst_updates": [],
+                    "responses": [],
+                    "system_instruction": None
+                }
+            
+            event = events_by_frame[turn_start]
+            
+            # Use explicit flags if present, otherwise derive from role
+            if "speaking" in turn:
+                event["speaking"] = turn["speaking"]
+            if "dst_update" in turn:
+                event["dst_update"] = turn["dst_update"]
+            
+            if role == "DST_UPDATE":
+                if "dst_update" not in turn:
+                    event["dst_update"] = 1
+                content = turn.get("content", [])
+                if isinstance(content, list):
+                    for item in content:
+                        if isinstance(item, dict):
+                            step_id = item.get("id", "")
+                            transition = item.get("transition", "")
+                            dst_text = f"{step_id}->{transition}"
+                            event["dst_updates"].append(dst_text)
+                elif isinstance(content, str):
+                    event["dst_updates"].append(content)
+            
+            elif role == "assistant":
+                if "speaking" not in turn:
+                    event["speaking"] = 1
+                content = turn.get("content", "")
+                if content:
+                    event["responses"].append(content)
+            
+            elif role == "system":
+                event["system_instruction"] = turn.get("content", "")
         
         # Negative frame subsampling (following ProAssist's approach)
         all_frames = set(range(start_frame, end_frame))
-        positive_frames = set()
-        
-        # Identify positive frames (frames with speaking=1 or dst_update=1)
-        for event in events:
-            frame_idx = event["frame_idx"]
-            if event.get("speaking", 0) == 1 or event.get("dst_update", 0) == 1:
-                positive_frames.add(frame_idx)
+        positive_frames = set(events_by_frame.keys())
         
         # Negative frames = all - positive
         negative_frames = sorted(list(all_frames - positive_frames))
@@ -176,50 +216,51 @@ class DSTProAssistCollator:
             dst_update = event.get("dst_update", 0)
             
             # Binary labels at <image> position
-            # Positive frames: use actual labels (0 or 1)
-            # Sampled negative frames: use 0
-            # Unsampled negative frames: use -100 (ignore in loss)
             if frame_idx in positive_frames:
-                # Positive frame - use actual labels
                 speaking_labels.append(speaking)
                 dst_labels.append(dst_update)
             elif frame_idx in sampled_negative_frames:
-                # Sampled negative frame - explicitly set to 0
                 speaking_labels.append(0)
                 dst_labels.append(0)
             else:
-                # Unsampled negative frame - ignore in loss
                 speaking_labels.append(-100)
                 dst_labels.append(-100)
             
+            # Add system instruction (if any)
+            system_instruction = event.get("system_instruction")
+            if system_instruction:
+                sys_tokens = self.tokenizer.encode(system_instruction, add_special_tokens=False)
+                input_ids.extend(sys_tokens)
+                speaking_gen_labels.extend([-100] * len(sys_tokens))
+                dst_gen_labels.extend([-100] * len(sys_tokens))
+                speaking_labels.extend([-100] * len(sys_tokens))
+                dst_labels.extend([-100] * len(sys_tokens))
+            
             # Add DST updates (if any)
             for dst_text in event.get("dst_updates", []):
-                # Tokenize: [DST] S1->start <eos>
                 dst_tokens = [self.dst_token_id] + self.tokenizer.encode(
                     dst_text, add_special_tokens=False
                 )
                 dst_tokens.append(self.eos_token_id)
                 
                 input_ids.extend(dst_tokens)
-                speaking_gen_labels.extend([-100] * len(dst_tokens))  # No speaking loss
-                dst_gen_labels.extend(dst_tokens)  # DST generation loss
+                speaking_gen_labels.extend([-100] * len(dst_tokens))
+                dst_gen_labels.extend(dst_tokens)
                 speaking_labels.extend([-100] * len(dst_tokens))
                 dst_labels.extend([-100] * len(dst_tokens))
             
             # Add assistant responses (if any)
             for response in event.get("responses", []):
-                # Tokenize: [ASST] response <eos>
                 resp_tokens = [self.asst_token_id] + self.tokenizer.encode(
                     response, add_special_tokens=False
                 )
                 resp_tokens.append(self.eos_token_id)
                 
                 input_ids.extend(resp_tokens)
-                speaking_gen_labels.extend(resp_tokens)  # Speaking generation loss
-                dst_gen_labels.extend([-100] * len(resp_tokens))  # No DST loss
+                speaking_gen_labels.extend(resp_tokens)
+                dst_gen_labels.extend([-100] * len(resp_tokens))
                 speaking_labels.extend([-100] * len(resp_tokens))
                 dst_labels.extend([-100] * len(resp_tokens))
-        
         
         return input_ids, speaking_gen_labels, dst_gen_labels, speaking_labels, dst_labels
     

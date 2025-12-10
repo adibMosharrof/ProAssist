@@ -8,16 +8,85 @@ import sys
 from pathlib import Path
 from typing import List, Dict, Any
 
+import torch
+from transformers import AutoTokenizer
+from peft import PeftModel
+from accelerate import Accelerator
+
 from custom.src.prospect.inference.dst_evaluator import DSTEvaluator
 from custom.src.prospect.metrics.dst_binary_metrics import DSTBinaryMetrics
 from custom.src.prospect.metrics.dst_content_metrics import DSTContentMetrics
-from custom.src.prospect.data_sources.dst_training_dataset import DSTTrainingDataset
+from custom.src.prospect.data_sources.dst_proassist_dataset import DSTProAssistDataset
+from custom.src.prospect.models.dst_proact import DSTProActLlamaConfig, DSTProActLlamaForCausalLM
 from custom.src.prospect.metrics.proassist_metrics import ProAssistMetrics
 from custom.src.prospect.utils.logging_utils import Tee
+import datasets as hf_datasets
 
 # Register resolver for ${project_root}
 if not OmegaConf.has_resolver("project_root"):
     OmegaConf.register_new_resolver("project_root", lambda: os.getcwd())
+
+class DSTInferenceDataset(DSTProAssistDataset):
+    """Extended dataset for inference with embedding loading."""
+    def __init__(self, *args, siglip_features_dir=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.siglip_features_dir = Path(siglip_features_dir) if siglip_features_dir else None
+
+    def __getitem__(self, idx):
+        sample = super().__getitem__(idx)
+        sample["embeddings"] = self._load_embeddings(sample)
+        sample["conversation"] = self._build_conversation(sample)
+        return sample
+
+    def _load_embeddings(self, sample):
+        if not self.siglip_features_dir:
+            raise ValueError("siglip_features_dir must be provided")
+        
+        # The clip_id is the "id" field from the JSON
+        clip_id = sample.get("id")
+        if not clip_id:
+            raise ValueError(f"Sample missing 'id' field: {sample.keys()}")
+
+        dataset_name = sample.get("dataset_name", "assembly101")
+        # Path to SigLIP features: {siglip_features_dir}/{dataset_name}/siglip_features/{clip_id}.arrow
+        arrow_path = self.siglip_features_dir / dataset_name / "siglip_features" / f"{clip_id}.arrow"
+        
+        if not arrow_path.exists():
+            raise FileNotFoundError(f"SigLIP features not found at {arrow_path}")
+
+        dataset = hf_datasets.Dataset.from_file(str(arrow_path))
+        # Load as float16/bfloat16 to match model
+        embeddings = [torch.tensor(dataset[i]["cls"], dtype=torch.float16) for i in range(len(dataset))]
+        return torch.stack(embeddings, dim=0)
+
+    def _build_conversation(self, sample):
+        """Convert sparse events to conversation format for evaluation."""
+        conversation = []
+        events = sample.get("events", [])
+        
+        for event in events:
+            frame_idx = event["frame_idx"]
+            
+            # Assistant response (singular, can be None)
+            response = event.get("response")
+            if response:
+                conversation.append({
+                    "role": "assistant", 
+                    "start_frame": frame_idx,
+                    "content": response
+                })
+            
+            # DST updates
+            for update in event.get("dst_updates", []):
+                # Format: "ID->Transition"
+                if "->" in update:
+                    step_id, transition = update.split("->")
+                    conversation.append({
+                        "role": "DST_UPDATE",
+                        "start_frame": frame_idx,
+                        "content": [{"id": step_id.strip(), "transition": transition.strip()}]
+                    })
+        return conversation
 
 class InferencePipeline:
     def __init__(self, cfg: DictConfig):
@@ -25,11 +94,17 @@ class InferencePipeline:
         self.logger = logging.getLogger(__name__)
         self._setup_output_dir()
         self._setup_logging()
-        
+
     def _setup_output_dir(self):
-        # Use HydraConfig to get the actual output dir (which respects the config due to hydra.run.dir)
-        hydra_cfg = HydraConfig.get()
-        self.output_dir = Path(hydra_cfg.runtime.output_dir)
+        # Use HydraConfig to get the actual output dir
+        if HydraConfig.initialized():
+            hydra_cfg = HydraConfig.get()
+            self.output_dir = Path(hydra_cfg.runtime.output_dir)
+        else:
+            # Fallback for direct execution
+            self.output_dir = Path("outputs") / "inference"
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            
         self.logger.info(f"Output directory set to: {self.output_dir}")
 
     def _setup_logging(self):
@@ -43,25 +118,32 @@ class InferencePipeline:
         
         sys.stdout = Tee(open(stdout_file, 'w'), sys.stdout)
         sys.stderr = Tee(open(stderr_file, 'w'), sys.stderr)
-        
 
     def load_dataset(self):
+        print("DEBUG: Entering load_dataset")
         self.logger.info("Loading dataset...")
-        # We reuse DSTTrainingDataset but for evaluation (test set)
-        # Support multiple datasets by concatenating them
+        
         datasets = []
+        data_root = Path(self.cfg.project_root) / self.cfg.data.data_path
         
         for dataset_name in self.cfg.data.datasets:
-            dataset = DSTTrainingDataset(
-                data_path=self.cfg.data.data_path,
-                step_name=self.cfg.data.step_name, # e.g. "test"
+            # Path to specific JSON file: {root}/{dataset_name}/{step_name}.json
+            json_path = data_root / dataset_name / f"{self.cfg.data.step_name}.json"
+            
+            if not json_path.exists():
+                self.logger.warning(f"Dataset file not found: {json_path}")
+                continue
+                
+            dataset = DSTInferenceDataset(
+                data_path=str(json_path),
                 dataset_name=dataset_name,
-                max_seq_len=self.cfg.inference.max_seq_len,
-                neg_frame_sampling_rate=0.0, # No negative sampling for inference
-                input_style=self.cfg.data.get("input_style", "proassist")
+                siglip_features_dir=data_root
             )
             datasets.append(dataset)
         
+        if not datasets:
+            raise ValueError(f"No datasets loaded from {data_root}")
+
         # Concatenate all datasets
         if len(datasets) == 1:
             self.dataset = datasets[0]
@@ -71,7 +153,7 @@ class InferencePipeline:
         
         self.logger.info(f"Loaded {len(self.dataset)} samples from {len(datasets)} dataset(s)")
         
-        # Optionally limit samples for testing
+        # Limit samples
         if getattr(self.cfg.inference, "limit_samples", None):
             from torch.utils.data import Subset
             limit = self.cfg.inference.limit_samples
@@ -100,12 +182,78 @@ class InferencePipeline:
                 writer.writerow([key, value])
         self.logger.info(f"Metrics saved to {csv_file}")
 
+    def load_model(self):
+        """Load model and tokenizer from checkpoint with LoRA adapters."""
+        self.logger.info(f"Loading model from {self.cfg.model.llm_pretrained}")
+        
+        # Get device from accelerate process index
+        accelerator = Accelerator()
+        
+        # Create config
+        config = DSTProActLlamaConfig.from_pretrained_llama(
+            self.cfg.model.llm_pretrained,
+            vision_hidden_size=self.cfg.model.vision_hidden_size,
+            max_seq_len=self.cfg.inference.max_seq_len,
+        )
+        
+        # Load base model with bfloat16 (matches training dtype)
+        # Pass accelerator.device to place model on correct device
+        self.model = DSTProActLlamaForCausalLM.from_pretrained(
+            self.cfg.model.llm_pretrained,
+            config=config,
+            torch_dtype=torch.bfloat16,
+            device_map=accelerator.device
+        )
+        
+        # Initialize multimodal modules
+        self.model.init_multimodal_modules()
+        self.logger.info("✓ Initialized multimodal modules")
+        
+        # Load tokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(self.cfg.model.llm_pretrained)
+        
+        # Add special tokens BEFORE loading LoRA (critical for vocab alignment)
+        # These were added during training and need to be present for checkpoint compatibility
+        tokens_to_add = ["<image>", "[DST]", "[ASST]"]
+        self.tokenizer.add_tokens(tokens_to_add, special_tokens=True)
+        # Resize model embeddings to match new vocab size
+        self.model.resize_token_embeddings(len(self.tokenizer))
+        self.logger.info(f"✓ Added special tokens (vocab size: {len(self.tokenizer)})")
+        
+        # Store token IDs in config
+        config.img_token_id = self.tokenizer.convert_tokens_to_ids("<image>")
+        config.dst_gen_token_id = self.tokenizer.convert_tokens_to_ids("[DST]")
+        config.asst_gen_token_id = self.tokenizer.convert_tokens_to_ids("[ASST]")
+        self.model.config.img_token_id = config.img_token_id
+        self.model.config.dst_gen_token_id = config.dst_gen_token_id
+        self.model.config.asst_gen_token_id = config.asst_gen_token_id
+        
+        # Load LoRA adapters from checkpoint AFTER resizing embeddings
+        checkpoint_path = Path(self.cfg.model.checkpoint_path)
+        if checkpoint_path.exists():
+            self.logger.info(f"Loading LoRA adapters from {checkpoint_path}")
+            try:
+                self.model = PeftModel.from_pretrained(self.model, str(checkpoint_path))
+                self.logger.info("✓ LoRA adapters loaded successfully")
+            except RuntimeError as e:
+                self.logger.error(f"Failed to load LoRA adapters: {e}")
+                self.logger.warning("Using model without LoRA adapters")
+        else:
+            self.logger.warning(f"Checkpoint path does not exist: {checkpoint_path}")
+            self.logger.info("Using model without LoRA adapters")
+        
+        # Set to evaluation mode
+        self.model.eval()
+        self.logger.info("✓ Model loaded and set to eval mode")
+
     def run(self):
         self.load_dataset()
+        self.load_model()
         metrics = self.initialize_metrics()
         
         evaluator = DSTEvaluator(
-            model_config=self.cfg.model,
+            model=self.model,
+            tokenizer=self.tokenizer,
             dataset=self.dataset,
             metrics=metrics,
             output_dir=str(self.output_dir),
@@ -118,32 +266,7 @@ class InferencePipeline:
 
 @hydra.main(config_path="../../../config/inference", config_name="dst_inference", version_base=None)
 def main(cfg: DictConfig):
-    # Get the actual output directory that Hydra created
-    # Note: We need to handle the case where output_dir is overridden in the config
-    # But for consistency with training script, let's use the one established by the pipeline
-    # or just use the hydra one.
-    
-    # However, InferencePipeline sets up its own output dir based on cfg.
-    # Let's instantiate pipeline first to get the output dir, or just use the logic from training script.
-    
-    # Actually, let's do it inside main before pipeline runs.
-    # We need to know where to save the logs.
-    # The pipeline calculates output_dir.
-    
-    # Let's use a temporary pipeline init to get the config/output dir? 
-    # Or just replicate the output dir logic.
-    
-    # Better yet, let's wrap the pipeline run.
-    
     pipeline = InferencePipeline(cfg)
-    output_dir = pipeline.output_dir
-    
-    import sys
-    
-    # Redirect stdout and stderr to separate log files
-    stdout_log_file = output_dir / "inference_stdout.log"
-    stderr_log_file = output_dir / "inference_stderr.log"
-    
     pipeline.run()
 
 if __name__ == "__main__":
