@@ -86,18 +86,48 @@ class DSTProAssistCollator:
         all_image_embeds = []
         
         for sample in samples:
-            # Build continuous sequence from events
-            input_ids, speaking_gen_labels, dst_gen_labels, speaking_labels, dst_labels = self._build_sequence(sample)
-                
-            # Load SigLIP embeddings
+            # 1. Load SigLIP embeddings first to know actual frame count
             embeddings = self._load_embeddings(sample)
+            num_actual_frames = embeddings.shape[0]
+            
+            # 2. Build continuous sequence, clipping to available frames
+            input_ids, speaking_gen_labels, dst_gen_labels, speaking_labels, dst_labels, used_frames = self._build_sequence(
+                sample, num_actual_frames
+            )
+            
+            # 3. Slice embeddings to match the tokens we generated
+            # _build_sequence returns tokens for range(start_frame, end_frame_clipped)
+            # So we take the corresponding slice from embeddings
+            start_frame = sample["start_frame"]
+            # Ensure start_frame is within bounds
+            if start_frame >= num_actual_frames:
+                # Edge case: clip starts after video ends.
+                # Should ideally be filtered out, but handle gracefully with empty/dummy
+                logger.warning(f"Clip start {start_frame} >= actual frames {num_actual_frames} for {sample.get('video_uid')}")
+                sliced_embeddings = torch.zeros((0, embeddings.shape[1]), dtype=embeddings.dtype)
+            else:
+                # The loop in _build_sequence ran for `used_frames` count
+                # It started at `start_frame`.
+                # So we slice [start_frame : start_frame + used_frames]
+                sliced_embeddings = embeddings[start_frame : start_frame + used_frames]
+            
+            # Verify lengths match (sanity check)
+            # Count <image> tokens in input_ids
+            num_img_tokens = input_ids.count(self.img_token_id)
+            if num_img_tokens != sliced_embeddings.shape[0]:
+                 logger.error(f"Mismatch after fix: {num_img_tokens} image tokens vs {sliced_embeddings.shape[0]} embeddings. Start: {start_frame}, Used: {used_frames}, Actual: {num_actual_frames}")
+                 # Force match by truncating the longer one (desperate fallback)
+                 min_len = min(num_img_tokens, sliced_embeddings.shape[0])
+                 sliced_embeddings = sliced_embeddings[:min_len]
+                 # We can't easily remove tokens from input_ids list scattered with other tokens without re-doing build_sequence.
+                 # Rely on the logic being correct.
             
             all_input_ids.append(torch.tensor(input_ids, dtype=torch.long))
             all_speaking_gen_labels.append(torch.tensor(speaking_gen_labels, dtype=torch.long))
             all_dst_gen_labels.append(torch.tensor(dst_gen_labels, dtype=torch.long))
             all_speaking_labels.append(torch.tensor(speaking_labels, dtype=torch.long))
             all_dst_labels.append(torch.tensor(dst_labels, dtype=torch.long))
-            all_image_embeds.append(embeddings)
+            all_image_embeds.append(sliced_embeddings)
         
         # Pad sequences
         input_ids = pad_sequence(all_input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id)
@@ -116,7 +146,7 @@ class DSTProAssistCollator:
             "image_embeds": all_image_embeds,  # List of tensors
         }
     
-    def _build_sequence(self, sample: Dict[str, Any]):
+    def _build_sequence(self, sample: Dict[str, Any], max_frames: int):
         """Build continuous sequence from conversation.
         
         For each frame in [start_frame, end_frame):
@@ -125,7 +155,7 @@ class DSTProAssistCollator:
         3. If frame has events, add [DST] + DST text or [ASST] + response
         
         Returns:
-            input_ids, speaking_gen_labels, dst_gen_labels, speaking_labels, dst_labels
+            input_ids, speaking_gen_labels, dst_gen_labels, speaking_labels, dst_labels, used_frames
         """
         input_ids = []
         speaking_gen_labels = []
@@ -135,6 +165,14 @@ class DSTProAssistCollator:
         
         start_frame = sample["start_frame"]
         end_frame = sample["end_frame"]
+        
+        # Clip end_frame to available frames
+        if start_frame < max_frames:
+             end_frame = min(end_frame, max_frames)
+        else:
+             # Sample starts after available frames
+             end_frame = start_frame # Empty range
+        
         conversation = sample.get("conversation", [])
         
         # Parse conversation into events by frame
@@ -203,7 +241,7 @@ class DSTProAssistCollator:
                 num_sample = max(int(self.negative_sampling_rate * len(negative_frames)), 1)
                 sampled_negative_frames = set(random.sample(negative_frames, num_sample))
         
-        # Process ALL frames in the clip
+        # Process ALL frames in the clip (clipped range)
         for frame_idx in range(start_frame, end_frame):
             # Add <image> token
             input_ids.append(self.img_token_id)
@@ -262,7 +300,8 @@ class DSTProAssistCollator:
                 speaking_labels.extend([-100] * len(resp_tokens))
                 dst_labels.extend([-100] * len(resp_tokens))
         
-        return input_ids, speaking_gen_labels, dst_gen_labels, speaking_labels, dst_labels
+        used_frames = max(0, end_frame - start_frame)
+        return input_ids, speaking_gen_labels, dst_gen_labels, speaking_labels, dst_labels, used_frames
     
     def _load_embeddings(self, sample: Dict[str, Any]) -> torch.Tensor:
         """Load SigLIP embeddings from .arrow file.

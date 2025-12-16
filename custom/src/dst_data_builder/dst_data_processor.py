@@ -117,6 +117,10 @@ class DSTDataProcessor:
 
         # Load and limit data
         limited_data = self._load_and_limit_data(input_file, num_rows)
+        limited_data = self._get_error_samples(limited_data, split)
+        
+        # Filter conversation turns based on actual frame counts
+        limited_data = self._filter_data_by_frames(limited_data, dataset_name)
 
         if not limited_data:
             self.logger.warning(f"No data loaded from {input_file}")
@@ -215,6 +219,157 @@ class DSTDataProcessor:
             )
 
         return limited_data
+
+    def _get_error_samples(self, limited_data, split):
+        # Path to the mismatch file
+        mismatch_file = Path("custom/src/analysis/frame_validation/sparse_mismatches.json")
+        
+        if not mismatch_file.exists():
+            self.logger.warning(f"Mismatch file not found at {mismatch_file}. Returning all data.")
+            return limited_data
+
+        try:
+            with open(mismatch_file, "r") as f:
+                mismatches = json.load(f)
+        except json.JSONDecodeError:
+            self.logger.error(f"Failed to decode JSON from {mismatch_file}. Returning all data.")
+            return limited_data
+
+        # Get relevant video_uids for the current split
+        # mismatch items have "file": "train.json", "video_uid": "..."
+        target_file = f"{split}.json"
+        
+        error_uids = set()
+        for m in mismatches:
+            if m.get("file") == target_file:
+                uid = m.get("video_uid")
+                if uid:
+                    error_uids.add(uid)
+        
+        if not error_uids:
+            self.logger.warning(f"No error samples found for split {split} in {mismatch_file}. Returning all data.")
+            return limited_data
+            
+        self.logger.info(f"Found {len(error_uids)} unique error UIDs for split {split}.")
+
+        # Filter limited_data
+        filtered_data = [d for d in limited_data if d.get("video_uid") in error_uids]
+        
+        self.logger.info(f"Filtered data from {len(limited_data)} to {len(filtered_data)} error samples.")
+        
+        return filtered_data
+    
+    def _get_video_frame_count(self, video_uid: str, dataset_name: str) -> Optional[int]:
+        """Get total frames for a video from Arrow file (cached)"""
+        if hasattr(self, "video_frame_counts") and video_uid in self.video_frame_counts:
+            return self.video_frame_counts[video_uid]
+            
+        # Initialize cache if needed
+        if not hasattr(self, "video_frame_counts"):
+            self.video_frame_counts = {}
+            
+        # Construct path
+        # Assuming disassembly_ prefix is dropped or handled by user
+        # Standard path: data/proassist/processed_data/{dataset_name}/frames/{video_uid}.arrow
+        frames_dir = Path(f"data/proassist/processed_data/{dataset_name}/frames")
+        arrow_path = frames_dir / f"{video_uid}.arrow"
+        
+        if not arrow_path.exists():
+            # Try finding with glob if exact match fails (just in case)
+            candidates = list(frames_dir.glob(f"{video_uid}*.arrow"))
+            if candidates:
+                arrow_path = candidates[0]
+            else:
+                 self.logger.warning(f"Arrow file not found for {video_uid} in {frames_dir}")
+                 self.video_frame_counts[video_uid] = None
+                 return None
+                 
+        try:
+            # We need 'datasets' here. Import locally to avoid top-level dependency if not used
+            import datasets
+            # Load dataset to get length (streaming mode might be faster but len() is O(1) for Arrow)
+            ds = datasets.load_dataset("arrow", data_files=str(arrow_path), split="train")
+            num_frames = len(ds)
+            self.video_frame_counts[video_uid] = num_frames
+            return num_frames
+        except Exception as e:
+            self.logger.error(f"Error reading frames for {video_uid}: {e}")
+            self.video_frame_counts[video_uid] = None
+            return None
+
+    def _filter_conversation_turns(self, conversation_turns: List[dict], video_uid: str, dataset_name: str, video_start_time: float = 0.0) -> List[dict]:
+        """Filter conversation turns that exceed total video frames"""
+        num_frames = self._get_video_frame_count(video_uid, dataset_name)
+        if num_frames is None:
+            return conversation_turns
+            
+        filtered_turns = []
+        truncated_count = 0
+        dropped_count = 0
+        
+        for turn in conversation_turns:
+            start_frame = turn.get('start_frame')
+            end_frame = turn.get('end_frame')
+            
+            # If frames not present, we might want to calculate them from time?
+            # Existing logic relies on start_frame/end_frame being present or added later.
+            # Only filter if they ARE present.
+            
+            if start_frame is not None:
+                if start_frame >= num_frames:
+                    dropped_count += 1
+                    continue
+            
+            if end_frame is not None:
+                if end_frame > num_frames:
+                    # Clip end frame
+                    turn['end_frame'] = num_frames
+                    truncated_count += 1
+            
+            filtered_turns.append(turn)
+            
+        if dropped_count > 0 or truncated_count > 0:
+            self.logger.debug(f"Filtered {video_uid}: Dropped {dropped_count} turns, Truncated {truncated_count} turns (Limit: {num_frames})")
+            
+        return filtered_turns
+
+    def _filter_data_by_frames(self, data: List[dict], dataset_name: str) -> List[dict]:
+        """Iterate over all samples and filter their conversations based on frame limits"""
+        self.logger.info("🔍 Filtering conversations based on arrow frame limits...")
+        
+        processed_count = 0
+        modified_count = 0
+        
+        for item in tqdm(data, desc="Filtering frames"):
+            video_uid = item.get("video_uid")
+            if not video_uid:
+                continue
+                
+            conversations_list = item.get("conversations", []) # List of dicts, each with 'conversation' key?
+            # Wait, item structure in generated_dialogs?
+            # Typically item has "conversations": [{"conversation": [...], ...}]
+            
+            video_start_time = 0.0
+            if "parsed_video_anns" in item:
+                 video_start_time = item["parsed_video_anns"].get("video_start_time", 0.0)
+
+            any_modified = False
+            for conv_idx, conv_obj in enumerate(conversations_list):
+                turns = conv_obj.get("conversation", [])
+                original_len = len(turns)
+                
+                filtered_turns = self._filter_conversation_turns(turns, video_uid, dataset_name, video_start_time)
+                
+                if len(filtered_turns) != original_len or (turns and filtered_turns and turns != filtered_turns):
+                    conv_obj["conversation"] = filtered_turns
+                    any_modified = True
+            
+            if any_modified:
+                modified_count += 1
+            processed_count += 1
+            
+        self.logger.info(f"✅ Frame filtering complete. Modified {modified_count}/{processed_count} videos.")
+        return data
 
     def _generate_dst_labels(
         self, video_data: dict, video_index: int, dataset_name: str
