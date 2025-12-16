@@ -90,7 +90,7 @@ class DSTDataProcessor:
             return [], 1
 
     def process_dataset_split(
-        self, dataset_name: str, split: str, num_rows: int, output_dir: Path
+        self, dataset_name: str, split: str, num_rows: int, output_dir: Path, suffix: str = ""
     ) -> Tuple[int, int]:
         """
         Process a specific dataset and split combination
@@ -101,7 +101,7 @@ class DSTDataProcessor:
 
         # Input file path
         input_file = Path(
-            f"data/proassist/processed_data/{dataset_name}/generated_dialogs/{split}_filtered.json"
+            f"data/proassist/processed_data/{dataset_name}/generated_dialogs/{split}{suffix}.json"
         )
 
         if not input_file.exists():

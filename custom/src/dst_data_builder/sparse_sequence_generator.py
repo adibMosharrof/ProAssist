@@ -173,7 +173,7 @@ class SparseSequenceGenerator(SimpleDSTGenerator):
                 
                 # 1. Process dataset split (generates DST via GPT)
                 processed, failed = self.data_processor.process_dataset_split(
-                    dataset_name, split, num_rows, dataset_output_dir
+                    dataset_name, split, num_rows, dataset_output_dir, cfg.data_source.suffix
                 )
                 total_processed += processed
                 total_failed += failed
