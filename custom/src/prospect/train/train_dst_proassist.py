@@ -22,12 +22,18 @@ from accelerate import Accelerator
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from transformers import AutoTokenizer, TrainingArguments, BitsAndBytesConfig
+from transformers.integrations import TensorBoardCallback
+from transformers.trainer_callback import EarlyStoppingCallback
 from peft import prepare_model_for_kbit_training
 import wandb
 
 from prospect.models.dst_proact import DSTProActLlamaConfig, DSTProActLlamaForCausalLM
 from prospect.train.dst_proassist_trainer import DSTProAssistTrainer
-from prospect.utils.lora_utils import get_lora_config, apply_lora_to_model, print_trainable_parameters
+from prospect.utils.lora_utils import (
+    get_lora_config,
+    apply_lora_to_model,
+    print_trainable_parameters,
+)
 from prospect.utils.logging_utils import Tee
 
 # Direct imports to avoid circular dependency
@@ -39,6 +45,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ModelConfig:
     """Model configuration."""
+
     llm_pretrained: str = "meta-llama/Llama-3.2-3B-Instruct"
     vision_hidden_size: int = 1152  # SigLIP output dimension
     max_seq_len: int = 4096
@@ -56,26 +63,43 @@ class ModelConfig:
 @dataclass
 class LoRAConfig:
     """LoRA configuration."""
+
     use_lora: bool = True
     lora_r: int = 128
     lora_alpha: int = 256
     lora_dropout: float = 0.05
-    lora_target_modules: list = field(default_factory=lambda: [
-        "q_proj", "k_proj", "v_proj", "o_proj",
-        "gate_proj", "up_proj", "down_proj"
-    ])
-    modules_to_save: list = field(default_factory=lambda: [
-        "mm_projector", "speaking_decision_head", "dst_update_head"
-    ])
+    lora_target_modules: list = field(
+        default_factory=lambda: [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ]
+    )
+    modules_to_save: list = field(
+        default_factory=lambda: [
+            "mm_projector",
+            "speaking_decision_head",
+            "dst_update_head",
+        ]
+    )
 
 
 @dataclass
 class DataConfig:
     """Data configuration."""
-    data_dir: str = "custom/outputs/dst_generated/sparse_format/2025-12-06/05-27-35_gpt-4o_proassist_sparse"
+
+    data_dir: str = (
+        "custom/outputs/dst_generated/sparse_format/2025-12-06/05-27-35_gpt-4o_proassist_sparse"
+    )
     dataset_name: str = "assembly101"
     siglip_features_dir: str = None  # Will be set to data_dir if None
-    negative_sampling_rate: float = 1.0  # Rate for negative frame subsampling (1.0 = all, 0.5 = 50%)
+    negative_sampling_rate: float = (
+        1.0  # Rate for negative frame subsampling (1.0 = all, 0.5 = 50%)
+    )
 
 
 class DSTProAssistTraining:
@@ -85,31 +109,31 @@ class DSTProAssistTraining:
         """Initialize the DST ProAssist training class with configuration."""
         self.cfg = cfg
         self.logger = logging.getLogger(__name__)
-        
+
         # Suppress verbose logging from third-party libraries
         logging.getLogger("httpx").setLevel(logging.WARNING)
         logging.getLogger("openai").setLevel(logging.WARNING)
         logging.getLogger("urllib3").setLevel(logging.WARNING)
-        
+
         # Load dataset and collator modules
         self._load_data_modules()
-        
+
+        hydra_cfg = HydraConfig.get()
+        self.output_dir = Path(hydra_cfg.runtime.output_dir)
         # Setup logging to files
-        self._setup_logging()
+        # self._setup_logging()
 
     def _setup_logging(self):
         """Setup stdout/stderr logging to files using Tee class."""
         # Get Hydra output directory
-        hydra_cfg = HydraConfig.get()
-        self.output_dir = Path(hydra_cfg.runtime.output_dir)
-        
+
         # Redirect stdout and stderr to files using Tee class
         stdout_file = self.output_dir / "training_stdout.log"
         stderr_file = self.output_dir / "training_stderr.log"
-        
-        # sys.stdout = Tee(open(stdout_file, 'w'), sys.stdout)
-        # sys.stderr = Tee(open(stderr_file, 'w'), sys.stderr)
-        
+
+        sys.stdout = Tee(open(stdout_file, "w"), sys.stdout)
+        sys.stderr = Tee(open(stderr_file, "w"), sys.stderr)
+
         self.logger.info(f"✓ Output directory: {self.output_dir}")
         self.logger.info(f"✓ Logging stdout to: {stdout_file}")
         self.logger.info(f"✓ Logging stderr to: {stderr_file}")
@@ -119,16 +143,16 @@ class DSTProAssistTraining:
         # Load dst_proassist_dataset
         spec = importlib.util.spec_from_file_location(
             "dst_proassist_dataset",
-            Path(__file__).parent.parent / "data_sources" / "dst_proassist_dataset.py"
+            Path(__file__).parent.parent / "data_sources" / "dst_proassist_dataset.py",
         )
         dst_dataset_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(dst_dataset_module)
         self.DSTProAssistDataset = dst_dataset_module.DSTProAssistDataset
-        
+
         # Load dst_proassist_collator
         spec = importlib.util.spec_from_file_location(
             "dst_proassist_collator",
-            Path(__file__).parent.parent / "data_sources" / "dst_proassist_collator.py"
+            Path(__file__).parent.parent / "data_sources" / "dst_proassist_collator.py",
         )
         dst_collator_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(dst_collator_module)
@@ -137,7 +161,7 @@ class DSTProAssistTraining:
     def _load_model_and_tokenizer(self, model_cfg: ModelConfig, lora_cfg: LoRAConfig):
         """Load model and tokenizer with optional int4 quantization and LoRA."""
         self.logger.info(f"Loading model from {model_cfg.llm_pretrained}")
-        
+
         # Create config
         config = DSTProActLlamaConfig.from_pretrained_llama(
             model_cfg.llm_pretrained,
@@ -148,20 +172,22 @@ class DSTProAssistTraining:
             binary_decision_head_type=model_cfg.binary_decision_head_type,
             binary_loss_weight=model_cfg.binary_loss_weight,
         )
-        
+
         # Setup quantization config if enabled
         quantization_config = None
         if model_cfg.use_int4_quantization:
             self.logger.info("🔧 Enabling 4-bit quantization (NF4)")
-            
+
             # Map string dtype to torch dtype
             compute_dtype_map = {
                 "bfloat16": torch.bfloat16,
                 "float16": torch.float16,
                 "float32": torch.float32,
             }
-            compute_dtype = compute_dtype_map.get(model_cfg.bnb_4bit_compute_dtype, torch.bfloat16)
-            
+            compute_dtype = compute_dtype_map.get(
+                model_cfg.bnb_4bit_compute_dtype, torch.bfloat16
+            )
+
             quantization_config = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_compute_dtype=compute_dtype,
@@ -170,19 +196,24 @@ class DSTProAssistTraining:
             )
             self.logger.info(f"  ├─ Compute dtype: {model_cfg.bnb_4bit_compute_dtype}")
             self.logger.info(f"  ├─ Quant type: {model_cfg.bnb_4bit_quant_type}")
-            self.logger.info(f"  └─ Double quant: {model_cfg.bnb_4bit_use_double_quant}")
-        
+            self.logger.info(
+                f"  └─ Double quant: {model_cfg.bnb_4bit_use_double_quant}"
+            )
+
         # Load model with optional quantization
         load_kwargs = {
             "config": config,
         }
-        
+
         if quantization_config is not None:
             load_kwargs["quantization_config"] = quantization_config
-            load_kwargs["torch_dtype"] = torch.bfloat16  # Force BF16 for non-quantized layers
-            
+            load_kwargs["torch_dtype"] = (
+                torch.bfloat16
+            )  # Force BF16 for non-quantized layers
+
             # For distributed training with quantization, we must map to specific device
             from accelerate import Accelerator
+
             accelerator = Accelerator()
             if accelerator.num_processes > 1:
                 # Map entire model to the current process's device
@@ -191,19 +222,18 @@ class DSTProAssistTraining:
                 load_kwargs["device_map"] = "auto"
         else:
             load_kwargs["torch_dtype"] = torch.bfloat16
-        
+
         self.model = DSTProActLlamaForCausalLM.from_pretrained(
-            model_cfg.llm_pretrained,
-            **load_kwargs
+            model_cfg.llm_pretrained, **load_kwargs
         )
-        
+
         # Initialize multimodal modules
         self.model.init_multimodal_modules()
         self.logger.info("✓ Initialized multimodal modules")
-        
+
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(model_cfg.llm_pretrained)
-        
+
         # Add special tokens
         tokens_to_add = []
         if "<image>" not in self.tokenizer.get_vocab():
@@ -212,12 +242,12 @@ class DSTProAssistTraining:
             tokens_to_add.append("[DST]")
         if "[ASST]" not in self.tokenizer.get_vocab():
             tokens_to_add.append("[ASST]")
-        
+
         if tokens_to_add:
             self.tokenizer.add_tokens(tokens_to_add, special_tokens=True)
             self.model.resize_token_embeddings(len(self.tokenizer))
             self.logger.info(f"✓ Added tokens: {tokens_to_add}")
-        
+
         # Store token IDs in config
         config.img_token_id = self.tokenizer.convert_tokens_to_ids("<image>")
         config.dst_gen_token_id = self.tokenizer.convert_tokens_to_ids("[DST]")
@@ -225,16 +255,18 @@ class DSTProAssistTraining:
         self.model.config.img_token_id = config.img_token_id
         self.model.config.dst_gen_token_id = config.dst_gen_token_id
         self.model.config.asst_gen_token_id = config.asst_gen_token_id
-        
+
         # Set pad token
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
         # Prepare for kbit training if enabled (Critical for QLoRA stability)
         if model_cfg.use_int4_quantization:
             self.model = prepare_model_for_kbit_training(
-                self.model, 
-                use_gradient_checkpointing=self.cfg.training.get("gradient_checkpointing", False),
-                gradient_checkpointing_kwargs={"use_reentrant": False}
+                self.model,
+                use_gradient_checkpointing=self.cfg.training.get(
+                    "gradient_checkpointing", False
+                ),
+                gradient_checkpointing_kwargs={"use_reentrant": False},
             )
             self.logger.info("✓ Prepared model for k-bit training")
 
@@ -244,7 +276,7 @@ class DSTProAssistTraining:
             # Convert ListConfig to list to avoid JSON serialization issues
             target_modules = list(lora_cfg.lora_target_modules)
             modules_to_save = list(lora_cfg.modules_to_save)
-            
+
             lora_config = get_lora_config(
                 lora_r=lora_cfg.lora_r,
                 lora_alpha=lora_cfg.lora_alpha,
@@ -253,35 +285,46 @@ class DSTProAssistTraining:
                 modules_to_save=modules_to_save,
             )
             self.model = apply_lora_to_model(self.model, lora_config)
-            
+
             # Verify trainable parameters
             self.logger.info("✓ LoRA applied successfully")
             print_trainable_parameters(self.model)
         else:
             # Freeze base model, train only multimodal modules
-            self.logger.info("🔒 Freezing base LLM, training only multimodal modules...")
+            self.logger.info(
+                "🔒 Freezing base LLM, training only multimodal modules..."
+            )
             self.model.requires_grad_(False)
-            
+
             # Enable gradients for custom modules
-            if hasattr(self.model, 'mm_projector') and self.model.mm_projector is not None:
+            if (
+                hasattr(self.model, "mm_projector")
+                and self.model.mm_projector is not None
+            ):
                 self.model.mm_projector.requires_grad_(True)
                 self.logger.info("  ├─ mm_projector: trainable")
-            
-            if hasattr(self.model, 'speaking_decision_head') and self.model.speaking_decision_head is not None:
+
+            if (
+                hasattr(self.model, "speaking_decision_head")
+                and self.model.speaking_decision_head is not None
+            ):
                 self.model.speaking_decision_head.requires_grad_(True)
                 self.logger.info("  ├─ speaking_decision_head: trainable")
-            
-            if hasattr(self.model, 'dst_update_head') and self.model.dst_update_head is not None:
+
+            if (
+                hasattr(self.model, "dst_update_head")
+                and self.model.dst_update_head is not None
+            ):
                 self.model.dst_update_head.requires_grad_(True)
                 self.logger.info("  └─ dst_update_head: trainable")
-            
+
             print_trainable_parameters(self.model)
 
     def _setup_datasets(self, data_cfg: DataConfig):
         """Setup train/val/test datasets."""
         data_dir = Path(data_cfg.data_dir)
         dataset_dir = data_dir / data_cfg.dataset_name
-        
+
         self.datasets = {}
         for split in ["train", "val", "test"]:
             json_path = dataset_dir / f"{split}.json"
@@ -292,7 +335,9 @@ class DSTProAssistTraining:
                     dataset_name=data_cfg.dataset_name,
                     siglip_features_dir=data_cfg.siglip_features_dir,
                 )
-                self.logger.info(f"✓ Loaded {len(self.datasets[split])} {split} samples")
+                self.logger.info(
+                    f"✓ Loaded {len(self.datasets[split])} {split} samples"
+                )
             else:
                 self.logger.warning(f"⚠ {split} dataset not found: {json_path}")
 
@@ -310,7 +355,7 @@ class DSTProAssistTraining:
         """Create training arguments."""
         # Use Hydra output directory + checkpoints subdirectory
         checkpoint_dir = self.output_dir / self.cfg.training.output_dir
-        
+
         return TrainingArguments(
             output_dir=str(checkpoint_dir),
             num_train_epochs=self.cfg.training.num_epochs,
@@ -333,12 +378,13 @@ class DSTProAssistTraining:
             remove_unused_columns=False,
             report_to=self.cfg.training.get("report_to", []),
             disable_tqdm=True,  # Disable progress bar for clean dictionary-style logging
+            greater_is_better=False,  # eval_loss: lower is better
         )
 
     def _create_trainer(self):
         """Create trainer."""
         training_args = self._create_training_args()
-        
+
         trainer = DSTProAssistTrainer(
             model=self.model,
             args=training_args,
@@ -347,7 +393,18 @@ class DSTProAssistTraining:
             data_collator=self.data_collator,
             processor=self.tokenizer,
         )
-        
+
+        # Add early stopping callback
+        early_stop_callback = EarlyStoppingCallback(
+            early_stopping_patience=self.cfg.training.get("early_stopping_patience", 3),
+            early_stopping_threshold=0.0,
+        )
+        trainer.add_callback(early_stop_callback)
+        self.logger.info(
+            f"✓ Early stopping enabled: patience={self.cfg.training.get('early_stopping_patience', 3)}, "
+            f"metric=eval_loss"
+        )
+
         self.logger.info("✓ Created trainer")
         return trainer
 
@@ -355,47 +412,47 @@ class DSTProAssistTraining:
         """Run the DST ProAssist training process."""
         # Initialize Accelerator for multi-GPU training
         accelerator = Accelerator()
-        
+
         # Log GPU info from main process only
         if accelerator.is_main_process:
             self.logger.info("=" * 80)
             self.logger.info("DST ProAssist Training")
             self.logger.info("=" * 80)
             self.logger.info(f"🚀 Multi-GPU setup: {accelerator.num_processes} GPUs")
-        
+
         # Create configs
         model_cfg = ModelConfig(**self.cfg.model)
         lora_cfg = LoRAConfig(**self.cfg.lora)
         data_cfg = DataConfig(**self.cfg.data)
-        
+
         # Set siglip_features_dir if not specified
         if data_cfg.siglip_features_dir is None:
             data_cfg.siglip_features_dir = data_cfg.data_dir
-        
+
         # Setup all components
         self._load_model_and_tokenizer(model_cfg, lora_cfg)
         self._setup_datasets(data_cfg)
         self._setup_data_collator(data_cfg, model_cfg)
-        
+
         # Create trainer (Trainer handles Accelerate integration automatically)
         trainer = self._create_trainer()
-        
+
         if accelerator.is_main_process:
             self.logger.info(f"Training samples: {len(self.datasets.get('train', []))}")
             self.logger.info(f"Validation samples: {len(self.datasets.get('val', []))}")
-        
+
         # Train
         if accelerator.is_main_process:
             self.logger.info("Starting training...")
         trainer.train()
-        
+
         # Save final model to checkpoint directory (only from main process)
         if accelerator.is_main_process:
             self.logger.info(f"Saving model to {trainer.args.output_dir}")
             trainer.save_model()
             self.tokenizer.save_pretrained(trainer.args.output_dir)
             self.logger.info("✅ Training complete!")
-        
+
         # Synchronize all processes before exiting
         accelerator.wait_for_everyone()
 
@@ -404,7 +461,12 @@ class DSTProAssistTraining:
 _script_dir = Path(__file__).parent
 _config_dir = _script_dir.parent.parent.parent / "config" / "training"
 
-@hydra.main(version_base=None, config_path=str(_config_dir), config_name="dst_proassist_training")
+
+@hydra.main(
+    version_base=None,
+    config_path=str(_config_dir),
+    config_name="dst_proassist_training",
+)
 def main(cfg: DictConfig):
     """Main training function."""
     try:
