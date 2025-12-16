@@ -8,15 +8,16 @@ def check_mismatch():
     frames_dir = Path("data/proassist/processed_data/assembly101/frames")
     
     files_to_check = [
-        "train_filtered.json",
+        "test_filtered.json",
         "val_filtered.json",
-        "test_filtered.json"
+        # "train_filtered.json"
     ]
     
     total_mismatch_count = 0
     total_missing_file_count = 0
     missing_uids = []
     corrupt_uids = []
+    mismatch_details = []
     
     # Cache frame counts to avoid reopening files across splits
     video_frame_counts = {}
@@ -125,6 +126,16 @@ def check_mismatch():
                 else:
                     continue
 
+                # Get video start time for offset
+                video_start_time = 0.0
+                if "parsed_video_anns" in item:
+                    video_start_time = item["parsed_video_anns"].get("video_start_time", 0.0)
+                
+                # Also check clips start time which might be more accurate for the actual content range
+                # Use the first clip's start time if available and if video_start_time seems off or for distinct clips
+                # But typically video_start_time is sufficient if consistent.
+                # Let's stick to video_start_time as the base offset.
+                
                 for turn_idx, turn in enumerate(turns):
                     # Calculate frames from time if not present
                     start_frame = turn.get('start_frame')
@@ -133,15 +144,24 @@ def check_mismatch():
                     if start_frame is None or end_frame is None:
                         timestamp = turn.get('time')
                         if timestamp is not None:
-                            start_frame, end_frame = calculate_frame_range_for_timestamp(float(timestamp))
+                            # Apply offset
+                            relative_time = float(timestamp) - video_start_time
+                            # Ensure non-negative? 
+                            # If relative_time < 0, it means turn is before video start?
+                            # For now, just calculate.
+                            start_frame, end_frame = calculate_frame_range_for_timestamp(relative_time)
                     
                     if start_frame is not None and start_frame >= num_frames:
-                         # print(f"Mismatch in {video_uid} (Conv {conversation_idx}, Turn {turn_idx}): Turn start_frame {start_frame} >= Arrow frames {num_frames}")
+                         msg = f"Mismatch in {video_uid} (Conv {conversation_idx}, Turn {turn_idx}): Turn start_frame {start_frame} (Time {turn.get('time')} - Start {video_start_time}) >= Arrow frames {num_frames}"
+                         print(msg)
+                         mismatch_details.append(msg)
                          has_mismatch = True
                          break
                     
                     if end_frame is not None and end_frame > num_frames:
-                        # print(f"Mismatch in {video_uid} (Conv {conversation_idx}, Turn {turn_idx}): Turn end_frame {end_frame} > Arrow frames {num_frames}")
+                        msg = f"Mismatch in {video_uid} (Conv {conversation_idx}, Turn {turn_idx}): Turn end_frame {end_frame} (Time {turn.get('time')} - Start {video_start_time}) > Arrow frames {num_frames}"
+                        print(msg)
+                        mismatch_details.append(msg)
                         has_mismatch = True
                         break 
                 
@@ -157,6 +177,11 @@ def check_mismatch():
     print(f"\nTotal conversations with mismatches (all splits): {total_mismatch_count}")
     print(f"Total missing arrow files: {total_missing_file_count}")
     print(f"Total corrupt arrow files: {len(corrupt_uids)}")
+    
+    if mismatch_details:
+        print("\nAll Mismatches Found:")
+        for detail in mismatch_details:
+            print(detail)
     
     if missing_uids:
         print("\nSample missing UIDs (first 5):")

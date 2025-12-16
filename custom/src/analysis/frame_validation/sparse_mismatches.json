@@ -1,0 +1,722 @@
+[
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3596,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3596): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3597,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3597): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3598,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3598): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3599,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3599): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3600,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3600): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3601,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3601): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3602,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3602): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3603,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3603): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3604,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3604): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3605,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3605): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit",
+    "sample_idx": 3636,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit (Sample 3636): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit",
+    "sample_idx": 3637,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit (Sample 3637): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit",
+    "sample_idx": 3638,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit (Sample 3638): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit",
+    "sample_idx": 3639,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit (Sample 3639): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit",
+    "sample_idx": 3640,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit (Sample 3640): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit",
+    "sample_idx": 3641,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit (Sample 3641): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit",
+    "sample_idx": 3642,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit (Sample 3642): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit",
+    "sample_idx": 3643,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit (Sample 3643): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit",
+    "sample_idx": 3644,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit (Sample 3644): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit",
+    "sample_idx": 3645,
+    "type": "clip_end_frame",
+    "sparse_frame": 400,
+    "arrow_frames": 99,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21179183_mono10bit (Sample 3645): Clip end_frame 400 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3858,
+    "type": "clip_end_frame",
+    "sparse_frame": 1264,
+    "arrow_frames": 99,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3858): Clip end_frame 1264 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3859,
+    "type": "clip_end_frame",
+    "sparse_frame": 1264,
+    "arrow_frames": 99,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3859): Clip end_frame 1264 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3860,
+    "type": "clip_end_frame",
+    "sparse_frame": 1264,
+    "arrow_frames": 99,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3860): Clip end_frame 1264 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3861,
+    "type": "clip_end_frame",
+    "sparse_frame": 1264,
+    "arrow_frames": 99,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3861): Clip end_frame 1264 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3862,
+    "type": "clip_end_frame",
+    "sparse_frame": 1264,
+    "arrow_frames": 99,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3862): Clip end_frame 1264 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3863,
+    "type": "clip_end_frame",
+    "sparse_frame": 1264,
+    "arrow_frames": 99,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3863): Clip end_frame 1264 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3864,
+    "type": "clip_end_frame",
+    "sparse_frame": 1264,
+    "arrow_frames": 99,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3864): Clip end_frame 1264 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3865,
+    "type": "clip_end_frame",
+    "sparse_frame": 1264,
+    "arrow_frames": 99,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3865): Clip end_frame 1264 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3866,
+    "type": "clip_end_frame",
+    "sparse_frame": 1264,
+    "arrow_frames": 99,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3866): Clip end_frame 1264 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit",
+    "sample_idx": 3867,
+    "type": "clip_end_frame",
+    "sparse_frame": 1264,
+    "arrow_frames": 99,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9026-b04b_9026_user_id_2021-02-03_163855__HMC_21110305_mono10bit (Sample 3867): Clip end_frame 1264 > Arrow frames 99"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit",
+    "sample_idx": 4997,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit (Sample 4997): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit",
+    "sample_idx": 4998,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit (Sample 4998): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit",
+    "sample_idx": 4999,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit (Sample 4999): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit",
+    "sample_idx": 5000,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit (Sample 5000): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit",
+    "sample_idx": 5001,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit (Sample 5001): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit",
+    "sample_idx": 5002,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit (Sample 5002): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit",
+    "sample_idx": 5003,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit (Sample 5003): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit",
+    "sample_idx": 5004,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit (Sample 5004): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit",
+    "sample_idx": 5005,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit (Sample 5005): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit",
+    "sample_idx": 5006,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit (Sample 5006): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit",
+    "sample_idx": 5017,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit (Sample 5017): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit",
+    "sample_idx": 5018,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit (Sample 5018): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit",
+    "sample_idx": 5019,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit (Sample 5019): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit",
+    "sample_idx": 5020,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit (Sample 5020): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit",
+    "sample_idx": 5021,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit (Sample 5021): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit",
+    "sample_idx": 5022,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit (Sample 5022): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit",
+    "sample_idx": 5023,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit (Sample 5023): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit",
+    "sample_idx": 5024,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit (Sample 5024): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit",
+    "sample_idx": 5025,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit (Sample 5025): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit",
+    "sample_idx": 5026,
+    "type": "clip_end_frame",
+    "sparse_frame": 304,
+    "arrow_frames": 249,
+    "msg": "Mismatch in disassembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit (Sample 5026): Clip end_frame 304 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit",
+    "sample_idx": 5247,
+    "type": "clip_end_frame",
+    "sparse_frame": 627,
+    "arrow_frames": 249,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit (Sample 5247): Clip end_frame 627 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit",
+    "sample_idx": 5248,
+    "type": "clip_end_frame",
+    "sparse_frame": 627,
+    "arrow_frames": 249,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit (Sample 5248): Clip end_frame 627 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit",
+    "sample_idx": 5249,
+    "type": "clip_end_frame",
+    "sparse_frame": 627,
+    "arrow_frames": 249,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit (Sample 5249): Clip end_frame 627 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit",
+    "sample_idx": 5250,
+    "type": "clip_end_frame",
+    "sparse_frame": 627,
+    "arrow_frames": 249,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit (Sample 5250): Clip end_frame 627 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit",
+    "sample_idx": 5251,
+    "type": "clip_end_frame",
+    "sparse_frame": 627,
+    "arrow_frames": 249,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit (Sample 5251): Clip end_frame 627 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit",
+    "sample_idx": 5252,
+    "type": "clip_end_frame",
+    "sparse_frame": 627,
+    "arrow_frames": 249,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit (Sample 5252): Clip end_frame 627 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit",
+    "sample_idx": 5253,
+    "type": "clip_end_frame",
+    "sparse_frame": 627,
+    "arrow_frames": 249,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit (Sample 5253): Clip end_frame 627 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit",
+    "sample_idx": 5254,
+    "type": "clip_end_frame",
+    "sparse_frame": 627,
+    "arrow_frames": 249,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit (Sample 5254): Clip end_frame 627 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit",
+    "sample_idx": 5255,
+    "type": "clip_end_frame",
+    "sparse_frame": 627,
+    "arrow_frames": 249,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21110305_mono10bit (Sample 5255): Clip end_frame 627 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit",
+    "sample_idx": 5296,
+    "type": "clip_end_frame",
+    "sparse_frame": 627,
+    "arrow_frames": 249,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit (Sample 5296): Clip end_frame 627 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit",
+    "sample_idx": 5297,
+    "type": "clip_end_frame",
+    "sparse_frame": 627,
+    "arrow_frames": 249,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit (Sample 5297): Clip end_frame 627 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit",
+    "sample_idx": 5298,
+    "type": "clip_end_frame",
+    "sparse_frame": 627,
+    "arrow_frames": 249,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit (Sample 5298): Clip end_frame 627 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit",
+    "sample_idx": 5299,
+    "type": "clip_end_frame",
+    "sparse_frame": 627,
+    "arrow_frames": 249,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit (Sample 5299): Clip end_frame 627 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit",
+    "sample_idx": 5300,
+    "type": "clip_end_frame",
+    "sparse_frame": 627,
+    "arrow_frames": 249,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit (Sample 5300): Clip end_frame 627 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit",
+    "sample_idx": 5301,
+    "type": "clip_end_frame",
+    "sparse_frame": 627,
+    "arrow_frames": 249,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit (Sample 5301): Clip end_frame 627 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit",
+    "sample_idx": 5302,
+    "type": "clip_end_frame",
+    "sparse_frame": 627,
+    "arrow_frames": 249,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit (Sample 5302): Clip end_frame 627 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit",
+    "sample_idx": 5303,
+    "type": "clip_end_frame",
+    "sparse_frame": 627,
+    "arrow_frames": 249,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit (Sample 5303): Clip end_frame 627 > Arrow frames 249"
+  },
+  {
+    "file": "train.json",
+    "video_uid": "assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit",
+    "sample_idx": 5304,
+    "type": "clip_end_frame",
+    "sparse_frame": 627,
+    "arrow_frames": 249,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9061-c13d_9061_user_id_2021-02-09_143830__HMC_21179183_mono10bit (Sample 5304): Clip end_frame 627 > Arrow frames 249"
+  },
+  {
+    "file": "val.json",
+    "video_uid": "assembly_nusar-2021_action_both_9074-a03_9074_user_id_2021-02-11_151600__HMC_21110305_mono10bit",
+    "sample_idx": 205,
+    "type": "clip_end_frame",
+    "sparse_frame": 541,
+    "arrow_frames": 338,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9074-a03_9074_user_id_2021-02-11_151600__HMC_21110305_mono10bit (Sample 205): Clip end_frame 541 > Arrow frames 338"
+  },
+  {
+    "file": "val.json",
+    "video_uid": "assembly_nusar-2021_action_both_9074-a03_9074_user_id_2021-02-11_151600__HMC_21110305_mono10bit",
+    "sample_idx": 206,
+    "type": "clip_end_frame",
+    "sparse_frame": 541,
+    "arrow_frames": 338,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9074-a03_9074_user_id_2021-02-11_151600__HMC_21110305_mono10bit (Sample 206): Clip end_frame 541 > Arrow frames 338"
+  },
+  {
+    "file": "val.json",
+    "video_uid": "assembly_nusar-2021_action_both_9074-a03_9074_user_id_2021-02-11_151600__HMC_21110305_mono10bit",
+    "sample_idx": 207,
+    "type": "clip_end_frame",
+    "sparse_frame": 541,
+    "arrow_frames": 338,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9074-a03_9074_user_id_2021-02-11_151600__HMC_21110305_mono10bit (Sample 207): Clip end_frame 541 > Arrow frames 338"
+  },
+  {
+    "file": "test.json",
+    "video_uid": "assembly_nusar-2021_action_both_9015-c10c_9015_user_id_2021-02-02_165955__HMC_21110305_mono10bit",
+    "sample_idx": 26,
+    "type": "clip_end_frame",
+    "sparse_frame": 1851,
+    "arrow_frames": 1223,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9015-c10c_9015_user_id_2021-02-02_165955__HMC_21110305_mono10bit (Sample 26): Clip end_frame 1851 > Arrow frames 1223"
+  },
+  {
+    "file": "test.json",
+    "video_uid": "assembly_nusar-2021_action_both_9015-c10c_9015_user_id_2021-02-02_165955__HMC_21110305_mono10bit",
+    "sample_idx": 27,
+    "type": "clip_end_frame",
+    "sparse_frame": 1851,
+    "arrow_frames": 1223,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9015-c10c_9015_user_id_2021-02-02_165955__HMC_21110305_mono10bit (Sample 27): Clip end_frame 1851 > Arrow frames 1223"
+  },
+  {
+    "file": "test.json",
+    "video_uid": "assembly_nusar-2021_action_both_9015-c10c_9015_user_id_2021-02-02_165955__HMC_21110305_mono10bit",
+    "sample_idx": 28,
+    "type": "clip_end_frame",
+    "sparse_frame": 1851,
+    "arrow_frames": 1223,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9015-c10c_9015_user_id_2021-02-02_165955__HMC_21110305_mono10bit (Sample 28): Clip end_frame 1851 > Arrow frames 1223"
+  },
+  {
+    "file": "test.json",
+    "video_uid": "assembly_nusar-2021_action_both_9015-c10c_9015_user_id_2021-02-02_165955__HMC_21179183_mono10bit",
+    "sample_idx": 32,
+    "type": "clip_end_frame",
+    "sparse_frame": 1851,
+    "arrow_frames": 1223,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9015-c10c_9015_user_id_2021-02-02_165955__HMC_21179183_mono10bit (Sample 32): Clip end_frame 1851 > Arrow frames 1223"
+  },
+  {
+    "file": "test.json",
+    "video_uid": "assembly_nusar-2021_action_both_9015-c10c_9015_user_id_2021-02-02_165955__HMC_21179183_mono10bit",
+    "sample_idx": 33,
+    "type": "clip_end_frame",
+    "sparse_frame": 1851,
+    "arrow_frames": 1223,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9015-c10c_9015_user_id_2021-02-02_165955__HMC_21179183_mono10bit (Sample 33): Clip end_frame 1851 > Arrow frames 1223"
+  },
+  {
+    "file": "test.json",
+    "video_uid": "assembly_nusar-2021_action_both_9015-c10c_9015_user_id_2021-02-02_165955__HMC_21179183_mono10bit",
+    "sample_idx": 34,
+    "type": "clip_end_frame",
+    "sparse_frame": 1851,
+    "arrow_frames": 1223,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9015-c10c_9015_user_id_2021-02-02_165955__HMC_21179183_mono10bit (Sample 34): Clip end_frame 1851 > Arrow frames 1223"
+  },
+  {
+    "file": "test.json",
+    "video_uid": "assembly_nusar-2021_action_both_9074-a03_9074_user_id_2021-02-11_151600__HMC_21179183_mono10bit",
+    "sample_idx": 206,
+    "type": "clip_end_frame",
+    "sparse_frame": 541,
+    "arrow_frames": 338,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9074-a03_9074_user_id_2021-02-11_151600__HMC_21179183_mono10bit (Sample 206): Clip end_frame 541 > Arrow frames 338"
+  },
+  {
+    "file": "test.json",
+    "video_uid": "assembly_nusar-2021_action_both_9074-a03_9074_user_id_2021-02-11_151600__HMC_21179183_mono10bit",
+    "sample_idx": 207,
+    "type": "clip_end_frame",
+    "sparse_frame": 541,
+    "arrow_frames": 338,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9074-a03_9074_user_id_2021-02-11_151600__HMC_21179183_mono10bit (Sample 207): Clip end_frame 541 > Arrow frames 338"
+  },
+  {
+    "file": "test.json",
+    "video_uid": "assembly_nusar-2021_action_both_9074-a03_9074_user_id_2021-02-11_151600__HMC_21179183_mono10bit",
+    "sample_idx": 208,
+    "type": "clip_end_frame",
+    "sparse_frame": 541,
+    "arrow_frames": 338,
+    "msg": "Mismatch in assembly_nusar-2021_action_both_9074-a03_9074_user_id_2021-02-11_151600__HMC_21179183_mono10bit (Sample 208): Clip end_frame 541 > Arrow frames 338"
+  }
+]
