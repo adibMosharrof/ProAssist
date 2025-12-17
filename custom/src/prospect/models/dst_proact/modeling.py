@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 from transformers import LlamaForCausalLM, AutoModelForCausalLM
 from transformers.modeling_outputs import CausalLMOutputWithPast
+from sklearn.metrics import balanced_accuracy_score, precision_recall_fscore_support
 
 from prospect.models.dst_proact.configuration import DSTProActLlamaConfig
 
@@ -291,18 +292,34 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
         
         
         if speaking_labels is not None and self.speaking_decision_head:
-            mask = speaking_labels != self.config.ignore_id
+            # Follow ProAssist's approach: separate loss for positive and negative frames
+            pos_mask = (speaking_labels == 1)
+            neg_mask = (speaking_labels == 0)
+            
+            speaking_loss = 0.0
+            
+            # Loss for positive frames (should speak)
+            if pos_mask.any():
+                speaking_loss_pos = bce_loss(outputs.speaking_logits[pos_mask], speaking_labels[pos_mask].float())
+                speaking_loss += speaking_loss_pos
+            
+            # Loss for negative frames (should not speak)
+            if neg_mask.any():
+                speaking_loss_neg = bce_loss(outputs.speaking_logits[neg_mask], speaking_labels[neg_mask].float())
+                speaking_loss += speaking_loss_neg
+            
+            # Average to balance gradient contributions
+            if pos_mask.any() and neg_mask.any():
+                speaking_loss = speaking_loss / 2.0
+            
+            log_dict["speaking_binary_loss"] = speaking_loss.item() if isinstance(speaking_loss, torch.Tensor) else speaking_loss
+            loss = (loss + speaking_loss * self.config.binary_loss_weight) if loss is not None else (speaking_loss * self.config.binary_loss_weight)
+            
+            # Compute metrics for speaking decision using sklearn
+            mask = (speaking_labels != self.config.ignore_id)
             if mask.any():
-                speaking_loss = bce_loss(outputs.speaking_logits[mask], speaking_labels[mask].float())
-                log_dict["speaking_binary_loss"] = speaking_loss.item()
-                loss = (loss + speaking_loss * self.config.binary_loss_weight) if loss is not None else speaking_loss
-                
-                # Compute metrics for speaking decision using sklearn
                 preds = (torch.sigmoid(outputs.speaking_logits[mask]) > 0.5).long().cpu().numpy()
                 targets = speaking_labels[mask].long().cpu().numpy()
-                
-                # Import sklearn metrics
-                from sklearn.metrics import balanced_accuracy_score, precision_recall_fscore_support
                 
                 # Balanced accuracy
                 log_dict["speaking_balanced_accuracy"] = float(balanced_accuracy_score(targets, preds))
@@ -316,18 +333,34 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
                 log_dict["speaking_f1"] = float(f1)
         
         if dst_update_labels is not None and self.dst_update_head:
-            mask = dst_update_labels != self.config.ignore_id
+            # Follow ProAssist's approach: separate loss for positive and negative frames
+            pos_mask = (dst_update_labels == 1)
+            neg_mask = (dst_update_labels == 0)
+            
+            dst_loss = 0.0
+            
+            # Loss for positive frames (should update DST)
+            if pos_mask.any():
+                dst_loss_pos = bce_loss(outputs.dst_update_logits[pos_mask], dst_update_labels[pos_mask].float())
+                dst_loss += dst_loss_pos
+            
+            # Loss for negative frames (should not update DST)
+            if neg_mask.any():
+                dst_loss_neg = bce_loss(outputs.dst_update_logits[neg_mask], dst_update_labels[neg_mask].float())
+                dst_loss += dst_loss_neg
+            
+            # Average to balance gradient contributions
+            if pos_mask.any() and neg_mask.any():
+                dst_loss = dst_loss / 2.0
+            
+            log_dict["dst_binary_loss"] = dst_loss.item() if isinstance(dst_loss, torch.Tensor) else dst_loss
+            loss = (loss + dst_loss * self.config.binary_loss_weight) if loss is not None else (dst_loss * self.config.binary_loss_weight)
+            
+            # Compute metrics for DST update decision using sklearn
+            mask = (dst_update_labels != self.config.ignore_id)
             if mask.any():
-                dst_loss = bce_loss(outputs.dst_update_logits[mask], dst_update_labels[mask].float())
-                log_dict["dst_binary_loss"] = dst_loss.item()
-                loss = (loss + dst_loss * self.config.binary_loss_weight) if loss is not None else dst_loss
-                
-                # Compute metrics for DST update decision using sklearn
                 preds = (torch.sigmoid(outputs.dst_update_logits[mask]) > 0.5).long().cpu().numpy()
                 targets = dst_update_labels[mask].long().cpu().numpy()
-                
-                # Import sklearn metrics
-                from sklearn.metrics import balanced_accuracy_score, precision_recall_fscore_support
                 
                 # Balanced accuracy
                 log_dict["dst_balanced_accuracy"] = float(balanced_accuracy_score(targets, preds))
