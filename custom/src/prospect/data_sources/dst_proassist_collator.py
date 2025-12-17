@@ -322,6 +322,10 @@ class DSTProAssistCollator:
             dst_update = event.get("dst_update", 0)
             
             # Binary labels at <image> position
+            # Following ProAssist's Negative Frame Sub-sampling (NFS):
+            # - Positive frames: compute loss
+            # - Sampled negative frames: compute loss
+            # - Unsampled negative frames: ignore (label=-100, no gradient)
             if frame_idx in positive_frames:
                 speaking_labels.append(speaking)
                 dst_labels.append(dst_update)
@@ -329,6 +333,7 @@ class DSTProAssistCollator:
                 speaking_labels.append(0)
                 dst_labels.append(0)
             else:
+                # Unsampled negative frames: no gradient (NFS strategy)
                 speaking_labels.append(-100)
                 dst_labels.append(-100)
             
@@ -337,26 +342,24 @@ class DSTProAssistCollator:
             
             # Add DST updates (if any)
             for dst_text in event.get("dst_updates", []):
-                dst_tokens = [self.dst_token_id] + self.tokenizer.encode(
-                    dst_text, add_special_tokens=False
-                )
-                dst_tokens.append(self.eos_token_id)
+                text_tokens = self.tokenizer.encode(dst_text, add_special_tokens=False)
+                dst_tokens = [self.dst_token_id] + text_tokens + [self.eos_token_id]
                 
                 input_ids.extend(dst_tokens)
+                # Only compute loss on the text tokens, not on [DST] prefix or EOS
                 speaking_gen_labels.extend([-100] * len(dst_tokens))
-                dst_gen_labels.extend(dst_tokens)
+                dst_gen_labels.extend([-100] + text_tokens + [-100])  # Only text tokens get loss
                 speaking_labels.extend([-100] * len(dst_tokens))
                 dst_labels.extend([-100] * len(dst_tokens))
             
             # Add assistant responses (if any)
             for response in event.get("responses", []):
-                resp_tokens = [self.asst_token_id] + self.tokenizer.encode(
-                    response, add_special_tokens=False
-                )
-                resp_tokens.append(self.eos_token_id)
+                text_tokens = self.tokenizer.encode(response, add_special_tokens=False)
+                resp_tokens = [self.asst_token_id] + text_tokens + [self.eos_token_id]
                 
                 input_ids.extend(resp_tokens)
-                speaking_gen_labels.extend(resp_tokens)
+                # Only compute loss on the text tokens, not on [ASST] prefix or EOS
+                speaking_gen_labels.extend([-100] + text_tokens + [-100])  # Only text tokens get loss
                 dst_gen_labels.extend([-100] * len(resp_tokens))
                 speaking_labels.extend([-100] * len(resp_tokens))
                 dst_labels.extend([-100] * len(resp_tokens))
