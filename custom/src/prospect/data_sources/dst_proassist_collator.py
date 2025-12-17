@@ -122,6 +122,19 @@ class DSTProAssistCollator:
                  # We can't easily remove tokens from input_ids list scattered with other tokens without re-doing build_sequence.
                  # Rely on the logic being correct.
             
+            # Truncate to max_seq_len if needed
+            if len(input_ids) > self.max_seq_len:
+                logger.warning(f"Truncating sequence from {len(input_ids)} to {self.max_seq_len} for {sample.get('video_uid')}")
+                input_ids = input_ids[:self.max_seq_len]
+                speaking_gen_labels = speaking_gen_labels[:self.max_seq_len]
+                dst_gen_labels = dst_gen_labels[:self.max_seq_len]
+                speaking_labels = speaking_labels[:self.max_seq_len]
+                dst_labels = dst_labels[:self.max_seq_len]
+                
+                # We must also truncate embeddings to match the number of <image> tokens in the truncated sequence
+                num_img_tokens_truncated = input_ids.count(self.img_token_id)
+                sliced_embeddings = sliced_embeddings[:num_img_tokens_truncated]
+
             all_input_ids.append(torch.tensor(input_ids, dtype=torch.long))
             all_speaking_gen_labels.append(torch.tensor(speaking_gen_labels, dtype=torch.long))
             all_dst_gen_labels.append(torch.tensor(dst_gen_labels, dtype=torch.long))
@@ -189,7 +202,9 @@ class DSTProAssistCollator:
                     "dst_update": 0,
                     "dst_updates": [],
                     "responses": [],
-                    "system_instruction": None
+                    "system_instruction": None,
+                    "task_knowledge": None,
+                    "initial_dst_state": None
                 }
             
             event = events_by_frame[turn_start]
@@ -222,7 +237,50 @@ class DSTProAssistCollator:
                     event["responses"].append(content)
             
             elif role == "system":
-                event["system_instruction"] = turn.get("content", "")
+                # System instructions should always be at the start of the CURRENT clip
+                # Store the system instruction which contains the initial state info
+                event_frame = start_frame
+                
+                if event_frame not in events_by_frame:
+                    events_by_frame[event_frame] = {
+                        "speaking": 0,
+                        "dst_update": 0,
+                        "dst_updates": [],
+                        "responses": [],
+                        "system_instruction": None,
+                        "task_knowledge": None,
+                        "initial_dst_state": None
+                    }
+                
+                # Store the system instruction which already contains the dialogue state info
+                system_content = turn.get("content", "")
+                if system_content:
+                    events_by_frame[event_frame]["system_instruction"] = system_content
+        
+        # The system instruction from the system role turn contains the dialogue state
+        # Enhance it with the full DST task overview (step IDs and names)
+        dst_steps = sample.get("dst", [])
+        
+        # Build DST task overview
+        dst_overview = None
+        if dst_steps:
+            dst_overview_lines = ["DST Task Overview:"]
+            for step in dst_steps:
+                step_id = step.get("id", "")
+                step_name = step.get("name", "")
+                if step_id and step_name:
+                    dst_overview_lines.append(f"{step_id}: {step_name}")
+            dst_overview = "\n".join(dst_overview_lines)
+        
+        # Add DST overview to system instruction at start_frame
+        if dst_overview and start_frame in events_by_frame:
+            existing_instruction = events_by_frame[start_frame].get("system_instruction", "")
+            if existing_instruction:
+                # Add DST overview before the dialogue state
+                enhanced_instruction = dst_overview + "\n\n" + existing_instruction
+                events_by_frame[start_frame]["system_instruction"] = enhanced_instruction
+            else:
+                events_by_frame[start_frame]["system_instruction"] = dst_overview
         
         # Negative frame subsampling (following ProAssist's approach)
         all_frames = set(range(start_frame, end_frame))
@@ -240,6 +298,16 @@ class DSTProAssistCollator:
                 import random
                 num_sample = max(int(self.negative_sampling_rate * len(negative_frames)), 1)
                 sampled_negative_frames = set(random.sample(negative_frames, num_sample))
+        
+        # Add system instruction BEFORE the first frame (at the beginning of sequence)
+        system_instruction = events_by_frame.get(start_frame, {}).get("system_instruction")
+        if system_instruction:
+            sys_tokens = self.tokenizer.encode(system_instruction, add_special_tokens=False)
+            input_ids.extend(sys_tokens)
+            speaking_gen_labels.extend([-100] * len(sys_tokens))
+            dst_gen_labels.extend([-100] * len(sys_tokens))
+            speaking_labels.extend([-100] * len(sys_tokens))
+            dst_labels.extend([-100] * len(sys_tokens))
         
         # Process ALL frames in the clip (clipped range)
         for frame_idx in range(start_frame, end_frame):
@@ -264,15 +332,8 @@ class DSTProAssistCollator:
                 speaking_labels.append(-100)
                 dst_labels.append(-100)
             
-            # Add system instruction (if any)
-            system_instruction = event.get("system_instruction")
-            if system_instruction:
-                sys_tokens = self.tokenizer.encode(system_instruction, add_special_tokens=False)
-                input_ids.extend(sys_tokens)
-                speaking_gen_labels.extend([-100] * len(sys_tokens))
-                dst_gen_labels.extend([-100] * len(sys_tokens))
-                speaking_labels.extend([-100] * len(sys_tokens))
-                dst_labels.extend([-100] * len(sys_tokens))
+            # Note: System instruction already added before the first frame
+            # Don't add it again for each frame
             
             # Add DST updates (if any)
             for dst_text in event.get("dst_updates", []):
@@ -312,28 +373,38 @@ class DSTProAssistCollator:
         if not self.siglip_features_dir:
             raise ValueError("siglip_features_dir must be provided to load embeddings")
         
-        # Get clip ID from sample
-        clip_id = sample.get("id") or sample.get("video_uid")
+        # Get clip ID from sample - prefer id (clip-specific) over video_uid
+        clip_id = sample.get("id", None)
+        if clip_id is None:
+            raise ValueError("clip_id must be provided to load embeddings")
+
         
-        # Construct path to .arrow file
-        # Format: {siglip_features_dir}/{dataset_name}/siglip_features/{clip_id}.arrow
         # We need to infer dataset_name from the path or sample
         dataset_name = sample.get("dataset_name", "assembly101")  # Default to assembly101
+        
+        # we dont need to do the video_id splitting for assembly101, since we saved the embeddings based on the id
+        # Construct path to .arrow file
+        # Format: {siglip_features_dir}/{dataset_name}/siglip_features/{clip_id}.arrow
         
         arrow_path = self.siglip_features_dir / dataset_name / "siglip_features" / f"{clip_id}.arrow"
         
         if not arrow_path.exists():
             raise FileNotFoundError(f"SigLIP features not found: {arrow_path}")
         
-        
         # Load from arrow file
-        dataset = hf_datasets.Dataset.from_file(str(arrow_path))
-        
-        # Extract CLS embeddings
-        embeddings = []
-        for i in range(len(dataset)):
-            cls_embed = dataset[i]["cls"]  # [1152]
-            embeddings.append(torch.tensor(cls_embed, dtype=torch.bfloat16))
-        
-        # Stack into [num_frames, 1152]
-        return torch.stack(embeddings, dim=0)
+        try:
+            dataset = hf_datasets.Dataset.from_file(str(arrow_path))
+            dataset = dataset.with_format("torch")
+            embeddings = dataset["cls"] # Returns tensor directly if format is torch
+            if not isinstance(embeddings, torch.Tensor):
+                 embeddings = torch.tensor(embeddings)
+            
+            # Ensure bfloat16 to match model expectation if needed, or float32 suitable for resizing
+            embeddings = embeddings.to(torch.bfloat16)
+            return embeddings
+            
+        except Exception as e:
+            logger.error(f"Error loading embeddings from {arrow_path}: {e}")
+            # Fallback (though this usually implies corrupt data): re-raise or return empty?
+            # Re-raising is safer for now to avoid silent failures in training
+            raise e

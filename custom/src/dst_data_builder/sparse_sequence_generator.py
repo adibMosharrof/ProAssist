@@ -79,12 +79,17 @@ class SparseSequenceGenerator(SimpleDSTGenerator):
         
         self.logger.info(f"🔢 Max sequence tokens: {self.max_sequence_tokens}")
         self.logger.info(f"🎬 FPS: {self.fps}")
+
+        # Explicitly ensure training modules are initialized (including splitter)
+        if not hasattr(self, "training_modules") or not self.training_modules:
+             self._initialize_training_modules()
     
     def convert_to_sparse_format(self, training_sample: dict) -> dict:
         """
         Prepare training sample with conversation preserved.
         
         Calculates clip boundaries but keeps original conversation structure.
+        Uses existing split metadata if available.
         """
         conversation = training_sample.get("conversation", [])
         
@@ -106,7 +111,8 @@ class SparseSequenceGenerator(SimpleDSTGenerator):
         min_frame = min(all_start_frames)
         max_frame = max(all_end_frames)
         
-        # Add clip boundaries
+        # Add clip boundaries (respecting potentially already split boundaries)
+        # If the sample was split, min/max frame will naturally reflect the split segment
         training_sample["start_frame"] = min_frame
         training_sample["end_frame"] = max_frame
         training_sample["num_total_frames"] = max_frame - min_frame + 1
@@ -138,6 +144,10 @@ class SparseSequenceGenerator(SimpleDSTGenerator):
         training_sample["speaking_frames"] = speaking_count
         training_sample["dst_update_frames"] = dst_update_count
         
+        # Ensure initial_dst_state is preserved/present
+        if "initial_dst_state" not in training_sample:
+             training_sample["initial_dst_state"] = training_sample.get("metadata", {}).get("initial_dst_state", {})
+
         return training_sample
 
     def run(self, cfg: DictConfig) -> None:
@@ -148,7 +158,7 @@ class SparseSequenceGenerator(SimpleDSTGenerator):
         splits = ["test", "val", "train"]
         num_rows = cfg.data_source.num_rows
 
-        self.logger.info("🚀 Starting Sparse Sequence DST Generation")
+        self.logger.info("🚀 Starting Sparse Sequence DST Generation with Splitting")
         self.logger.info(f"📊 Datasets: {datasets}")
         self.logger.info(f"🔄 Splits: {splits}")
         self.logger.info(f"📝 Rows per dataset/split: {num_rows}")
@@ -187,11 +197,14 @@ class SparseSequenceGenerator(SimpleDSTGenerator):
                 with open(enhanced_file, "r") as f:
                     enhanced_data = json.load(f)
                 
-                # 3. Create training format (applies all training modules)
+                # 3. Create training format (applies all training modules including SPLITTER)
+                # This returns a list of split segments
                 training_data = self.create_training_format(
                     enhanced_data, dataset_name, split
                 )
                 
+                self.logger.info(f"Generated {len(training_data)} clips from {len(enhanced_data)} videos (Splitting checks active)")
+
                 # 4. Convert each sample to sparse format
                 sparse_data = []
                 for sample in training_data:

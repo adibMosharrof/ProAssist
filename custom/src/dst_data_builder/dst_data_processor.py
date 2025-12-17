@@ -117,7 +117,7 @@ class DSTDataProcessor:
 
         # Load and limit data
         limited_data = self._load_and_limit_data(input_file, num_rows)
-        limited_data = self._get_error_samples(limited_data, split)
+        # limited_data = self._get_error_samples(limited_data, split)
         
         # Filter conversation turns based on actual frame counts
         limited_data = self._filter_data_by_frames(limited_data, dataset_name)
@@ -269,10 +269,15 @@ class DSTDataProcessor:
             self.video_frame_counts = {}
             
         # Construct path
-        # Assuming disassembly_ prefix is dropped or handled by user
+        # Check for assembly specific prefix stripping
+        filename = video_uid
+        if dataset_name == "assembly101":
+             # Match logic from siglip_embeddings_saver.py: split on first underscore
+             filename = filename.split("_", 1)[1]
+        
         # Standard path: data/proassist/processed_data/{dataset_name}/frames/{video_uid}.arrow
         frames_dir = Path(f"data/proassist/processed_data/{dataset_name}/frames")
-        arrow_path = frames_dir / f"{video_uid}.arrow"
+        arrow_path = frames_dir / f"{filename}.arrow"
         
         if not arrow_path.exists():
             # Try finding with glob if exact match fails (just in case)
