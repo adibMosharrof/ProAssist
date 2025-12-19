@@ -346,9 +346,10 @@ class DSTProAssistCollator:
                 dst_tokens = [self.dst_token_id] + text_tokens + [self.eos_token_id]
                 
                 input_ids.extend(dst_tokens)
-                # Only compute loss on the text tokens, not on [DST] prefix or EOS
+                # Only compute loss on the text tokens, not on [DST] prefix
+                # BUT include EOS in loss so model learns to stop generating
                 speaking_gen_labels.extend([-100] * len(dst_tokens))
-                dst_gen_labels.extend([-100] + text_tokens + [-100])  # Only text tokens get loss
+                dst_gen_labels.extend([-100] + text_tokens + [self.eos_token_id])  # Include EOS to teach stopping
                 speaking_labels.extend([-100] * len(dst_tokens))
                 dst_labels.extend([-100] * len(dst_tokens))
             
@@ -358,13 +359,15 @@ class DSTProAssistCollator:
                 resp_tokens = [self.asst_token_id] + text_tokens + [self.eos_token_id]
                 
                 input_ids.extend(resp_tokens)
-                # Only compute loss on the text tokens, not on [ASST] prefix or EOS
-                speaking_gen_labels.extend([-100] + text_tokens + [-100])  # Only text tokens get loss
+                # Only compute loss on the text tokens, not on [ASST] prefix
+                # BUT include EOS in loss so model learns to stop generating
+                speaking_gen_labels.extend([-100] + text_tokens + [self.eos_token_id])  # Include EOS to teach stopping
                 dst_gen_labels.extend([-100] * len(resp_tokens))
                 speaking_labels.extend([-100] * len(resp_tokens))
                 dst_labels.extend([-100] * len(resp_tokens))
         
         used_frames = max(0, end_frame - start_frame)
+        # text = self.tokenizer.decode(input_ids)
         return input_ids, speaking_gen_labels, dst_gen_labels, speaking_labels, dst_labels, used_frames
     
     def _load_embeddings(self, sample: Dict[str, Any]) -> torch.Tensor:
