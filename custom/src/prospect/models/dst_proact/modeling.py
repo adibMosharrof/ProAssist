@@ -261,31 +261,44 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
         log_dict = {}
         
         # Handle separate generation labels for DST and speaking
+        # In causal LM, logits at position i predict token at position i+1
+        # So we need to shift: use logits[:-1] to predict labels[1:]
         if speaking_gen_labels is not None:
+            # Shift logits and labels for causal LM
+            shift_logits = outputs.logits[..., :-1, :].contiguous()
+            shift_labels = speaking_gen_labels[..., 1:].contiguous()
+            
             # Compute LM loss for assistant responses
-            mask = speaking_gen_labels != -100
+            mask = shift_labels != -100
             if mask.any():
                 speaking_gen_loss = ce_loss(
-                    outputs.logits[mask],
-                    speaking_gen_labels[mask]
+                    shift_logits[mask],
+                    shift_labels[mask]
                 )
                 loss = speaking_gen_loss
                 log_dict["speaking_gen_loss"] = speaking_gen_loss.item()
         
         if dst_gen_labels is not None:
+            # Shift logits and labels for causal LM
+            shift_logits = outputs.logits[..., :-1, :].contiguous()
+            shift_labels = dst_gen_labels[..., 1:].contiguous()
+            
             # Compute LM loss for DST updates
-            mask = dst_gen_labels != -100
+            mask = shift_labels != -100
             if mask.any():
                 dst_gen_loss = ce_loss(
-                    outputs.logits[mask],
-                    dst_gen_labels[mask]
+                    shift_logits[mask],
+                    shift_labels[mask]
                 )
                 loss = (loss + dst_gen_loss) if loss is not None else dst_gen_loss
                 log_dict["dst_gen_loss"] = dst_gen_loss.item()
         
         # Fallback to standard labels if separate labels not provided
         if loss is None and labels is not None:
-            lm_loss = ce_loss(outputs.logits.flatten(0, 1), labels.flatten())
+            # Shift for causal LM
+            shift_logits = outputs.logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            lm_loss = ce_loss(shift_logits.flatten(0, 1), shift_labels.flatten())
             loss = lm_loss
             log_dict["lm_loss"] = lm_loss.item()
         
