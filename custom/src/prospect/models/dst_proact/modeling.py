@@ -60,7 +60,26 @@ class DSTProActModelMixin(AutoModelForCausalLM):
                 )
             self.dst_update_head.to(self.device, self.dtype)
         
+        # Separate generation heads for speaking and DST
+        # Initialize from base lm_head if available, otherwise random init
+        vocab_size = self.config.vocab_size
+        
+        self.speaking_generation_head = nn.Linear(lm_input_size, vocab_size, bias=False)
+        self.dst_generation_head = nn.Linear(lm_input_size, vocab_size, bias=False)
+        
+        # Copy weights from original lm_head if it exists
+        if hasattr(self, 'lm_head') and self.lm_head is not None:
+            logger.info("Initializing separate generation heads from lm_head")
+            self.speaking_generation_head.weight.data = self.lm_head.weight.data.clone()
+            self.dst_generation_head.weight.data = self.lm_head.weight.data.clone()
+        else:
+            logger.info("Initializing separate generation heads with random weights")
+        
+        self.speaking_generation_head.to(self.device, self.dtype)
+        self.dst_generation_head.to(self.device, self.dtype)
+        
         logger.info(f"✓ Initialized multimodal modules ({mm_feature_size} -> {lm_input_size})")
+        logger.info(f"✓ Initialized separate generation heads: speaking_generation_head, dst_generation_head")
     
     def mm_feature_proj(self, features: torch.Tensor) -> torch.Tensor:
         """Project vision features to LLM embedding space."""
@@ -134,9 +153,13 @@ class DSTProActModelMixin(AutoModelForCausalLM):
         max_length: int = 100,
         drop_generated_kv_cache: bool = False,
         output_hidden_states: bool = False,
+        use_dst_head: bool = False,
         **kwargs,
     ) -> Tuple[torch.Tensor, KV_CACHE, Optional[CausalLMOutputWithPast]]:
         """Fast greedy generation with KV cache (ProAssist pattern).
+        
+        Args:
+            use_dst_head: If True, use dst_generation_head; otherwise use speaking_generation_head
         
         Returns:
             - generated token ids
@@ -150,22 +173,43 @@ class DSTProActModelMixin(AutoModelForCausalLM):
         token_idx = 0
         first_outputs = None
         
+        # Select which generation head to use
+        generation_head = self.dst_generation_head if use_dst_head else self.speaking_generation_head
+        if generation_head is None:
+            generation_head = self.lm_head  # Fallback
+        
         for i in range(max_length):
-            outputs = self.forward(
+            # Get hidden states from base model
+            base_outputs = self.model(
                 inputs_embeds=inputs_embeds,
                 past_key_values=past_key_values,
                 use_cache=True,
-                output_hidden_states=output_hidden_states if i == 0 else False,
+                output_hidden_states=True,
                 return_dict=True,
             )
-            past_key_values = outputs["past_key_values"]
-            new_token_id = outputs["logits"][:, -1:].argmax(dim=-1)
+            
+            hidden_states = base_outputs.hidden_states[-1] if base_outputs.hidden_states else base_outputs[0]
+            past_key_values = base_outputs.past_key_values
+            
+            # Apply selected generation head
+            logits = generation_head(hidden_states)
+            
+            # Binary heads (only on first step if requested)
+            if i == 0 and output_hidden_states:
+                first_outputs = {
+                    "logits": logits,
+                    "past_key_values": past_key_values,
+                    "hidden_states": base_outputs.hidden_states,
+                }
+                if self.speaking_decision_head:
+                    first_outputs["speaking_logits"] = self.speaking_decision_head(hidden_states).squeeze(-1)
+                if self.dst_update_head:
+                    first_outputs["dst_update_logits"] = self.dst_update_head(hidden_states).squeeze(-1)
+                past_key_values_to_return = past_key_values
+            
+            new_token_id = logits[:, -1:].argmax(dim=-1)
             self.inplace_output_ids[:, i] = new_token_id
             token_idx = i
-            
-            if i == 0:
-                past_key_values_to_return = past_key_values
-                first_outputs = outputs  # Capture first step outputs for binary heads
             
             if new_token_id.item() == self.config.eos_token_id:
                 break
@@ -182,13 +226,21 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
     """DST-extended Llama model with multimodal support."""
     
     config_class = DSTProActLlamaConfig
-    _keys_to_ignore_on_load_missing = ["mm_projector", "speaking_decision_head", "dst_update_head"]
+    _keys_to_ignore_on_load_missing = [
+        "mm_projector", 
+        "speaking_decision_head", 
+        "dst_update_head",
+        "speaking_generation_head",
+        "dst_generation_head"
+    ]
     
     def __init__(self, config: DSTProActLlamaConfig) -> None:
         super().__init__(config)
         self.mm_projector = None
         self.speaking_decision_head = None
         self.dst_update_head = None
+        self.speaking_generation_head = None
+        self.dst_generation_head = None
         logger.info("✓ DSTProActLlamaForCausalLM initialized")
     
     def init_multimodal_modules(self) -> None:
@@ -237,38 +289,72 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
             if dst_update_labels is not None:
                 dst_update_labels = dst_update_labels[:, :max_len]
         
-        outputs = super().forward(
+        # Call base model without lm_head (get hidden states only)
+        base_outputs = self.model(
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache if not self.training else False,
             output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
+            output_hidden_states=True,  # Always need hidden states for separate heads
             return_dict=True,
         )
         
+        hidden_states = base_outputs.hidden_states[-1] if base_outputs.hidden_states else base_outputs[0]
+        
+        # Create outputs object to populate
+        outputs = type('ModelOutput', (), {})()
+        outputs.past_key_values = base_outputs.past_key_values
+        outputs.hidden_states = base_outputs.hidden_states if output_hidden_states else None
+        outputs.attentions = base_outputs.attentions if output_attentions else None
+        
         # Binary head outputs
-        if output_hidden_states and outputs.hidden_states:
-            last_hidden = outputs.hidden_states[-1]
-            if self.speaking_decision_head:
-                outputs.speaking_logits = self.speaking_decision_head(last_hidden).squeeze(-1)
-            if self.dst_update_head:
-                outputs.dst_update_logits = self.dst_update_head(last_hidden).squeeze(-1)
+        outputs.speaking_logits = None
+        outputs.dst_update_logits = None
+        if self.speaking_decision_head:
+            outputs.speaking_logits = self.speaking_decision_head(hidden_states).squeeze(-1)
+        if self.dst_update_head:
+            outputs.dst_update_logits = self.dst_update_head(hidden_states).squeeze(-1)
+        
+        # Generation head routing: use separate heads for speaking vs DST
+        # During training, we know which tokens belong to which task from labels
+        # During inference, we'll select based on binary head predictions
+        
+        if self.training and (speaking_gen_labels is not None or dst_gen_labels is not None):
+            # Training: compute logits from both heads, losses will be computed separately
+            speaking_logits = self.speaking_generation_head(hidden_states) if self.speaking_generation_head else None
+            dst_logits = self.dst_generation_head(hidden_states) if self.dst_generation_head else None
+            
+            # Store both for loss computation
+            outputs.speaking_generation_logits = speaking_logits
+            outputs.dst_generation_logits = dst_logits
+            # Keep unified logits for backward compatibility (use speaking by default)
+            outputs.logits = speaking_logits if speaking_logits is not None else dst_logits
+        else:
+            # Inference: need to determine which head to use
+            # If we have binary predictions, use them; otherwise default to speaking
+            # For now, use speaking head by default (will be refined in fast_greedy_generate)
+            if self.speaking_generation_head:
+                outputs.logits = self.speaking_generation_head(hidden_states)
+            else:
+                # Fallback to original lm_head if separate heads not initialized
+                outputs.logits = self.lm_head(hidden_states)
         
         # Compute losses
         loss = None
         log_dict = {}
         
         # Handle separate generation labels for DST and speaking
+        # Use separate generation heads for each task
         # In causal LM, logits at position i predict token at position i+1
         # So we need to shift: use logits[:-1] to predict labels[1:]
-        if speaking_gen_labels is not None:
+        if speaking_gen_labels is not None and hasattr(outputs, 'speaking_generation_logits') and outputs.speaking_generation_logits is not None:
             # Shift logits and labels for causal LM
-            shift_logits = outputs.logits[..., :-1, :].contiguous()
+            shift_logits = outputs.speaking_generation_logits[..., :-1, :].contiguous()
             shift_labels = speaking_gen_labels[..., 1:].contiguous()
             
-            # Compute LM loss for assistant responses
+            # Compute LM loss for assistant responses using speaking generation head
             mask = shift_labels != -100
             if mask.any():
                 speaking_gen_loss = ce_loss(
@@ -278,12 +364,12 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
                 loss = speaking_gen_loss
                 log_dict["speaking_gen_loss"] = speaking_gen_loss.item()
         
-        if dst_gen_labels is not None:
+        if dst_gen_labels is not None and hasattr(outputs, 'dst_generation_logits') and outputs.dst_generation_logits is not None:
             # Shift logits and labels for causal LM
-            shift_logits = outputs.logits[..., :-1, :].contiguous()
+            shift_logits = outputs.dst_generation_logits[..., :-1, :].contiguous()
             shift_labels = dst_gen_labels[..., 1:].contiguous()
             
-            # Compute LM loss for DST updates
+            # Compute LM loss for DST updates using DST generation head
             mask = shift_labels != -100
             if mask.any():
                 dst_gen_loss = ce_loss(

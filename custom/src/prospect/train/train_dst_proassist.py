@@ -93,7 +93,7 @@ class DataConfig:
     """Data configuration."""
 
     data_dir: str = (
-        "custom/outputs/dst_generated/sparse_format/2025-12-06/05-27-35_gpt-4o_proassist_sparse"
+        "custom/outputs/dst_generated/sparse_format/2025-12-06/14-13-11_gpt-4o_proassist_sparse"
     )
     dataset_name: str = "assembly101"
     siglip_features_dir: str = None  # Will be set to data_dir if None
@@ -121,22 +121,35 @@ class DSTProAssistTraining:
         hydra_cfg = HydraConfig.get()
         self.output_dir = Path(hydra_cfg.runtime.output_dir)
         # Setup logging to files
-        # self._setup_logging()
+        self._setup_logging()
 
     def _setup_logging(self):
-        """Setup stdout/stderr logging to files using Tee class."""
-        # Get Hydra output directory
+        """Setup stdout/stderr logging to files using Tee class.
+        
+        When running in SLURM, sys.stdout/stderr already point to job output files.
+        This function redirects output to BOTH:
+        - Original streams (SLURM job files when in SLURM, terminal otherwise)
+        - Custom log files in the Hydra output directory
+        """
+        # Save original stdout/stderr before any redirection
+        # (these will be SLURM job files if running under SLURM)
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
 
-        # Redirect stdout and stderr to files using Tee class
+        # Create log files with line buffering for real-time output
         stdout_file = self.output_dir / "training_stdout.log"
         stderr_file = self.output_dir / "training_stderr.log"
+        
+        stdout_filehandle = open(stdout_file, "w", buffering=1)  # Line buffered
+        stderr_filehandle = open(stderr_file, "w", buffering=1)  # Line buffered
 
-        sys.stdout = Tee(open(stdout_file, "w"), sys.stdout)
-        sys.stderr = Tee(open(stderr_file, "w"), sys.stderr)
+        # Redirect to both original stream (SLURM job file) and custom log file
+        sys.stdout = Tee(stdout_filehandle, original_stdout)
+        sys.stderr = Tee(stderr_filehandle, original_stderr)
 
         self.logger.info(f"✓ Output directory: {self.output_dir}")
-        self.logger.info(f"✓ Logging stdout to: {stdout_file}")
-        self.logger.info(f"✓ Logging stderr to: {stderr_file}")
+        self.logger.info(f"✓ Logging stdout to: {stdout_file} (+ SLURM job file if applicable)")
+        self.logger.info(f"✓ Logging stderr to: {stderr_file} (+ SLURM job file if applicable)")
 
     def _load_data_modules(self):
         """Load dataset and collator modules to avoid circular imports."""
