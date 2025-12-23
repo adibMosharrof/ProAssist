@@ -27,10 +27,7 @@ lora:
     - "gate_proj"
     - "up_proj"
     - "down_proj"
-  modules_to_save:
-    - "mm_projector"
-    - "speaking_decision_head"
-    - "dst_update_head"
+
 
 data:
   data_dir: custom/outputs/dst_generated/sparse_format/2025-12-06/14-13-11_gpt-4o_proassist_sparse

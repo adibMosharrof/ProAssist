@@ -51,6 +51,10 @@ class ModelConfig:
     max_seq_len: int = 4096
     use_speaking_decision_head: bool = True
     use_dst_update_head: bool = True
+    # Generation head routing
+    # If True: create speaking_generation_head + dst_generation_head and route generation.
+    # If False: use the single shared lm_head.
+    use_separate_generation_heads: bool = False
     binary_decision_head_type: str = "linear"
     binary_loss_weight: float = 1.0
     # Quantization settings
@@ -77,13 +81,6 @@ class LoRAConfig:
             "gate_proj",
             "up_proj",
             "down_proj",
-        ]
-    )
-    modules_to_save: list = field(
-        default_factory=lambda: [
-            "mm_projector",
-            "speaking_decision_head",
-            "dst_update_head",
         ]
     )
 
@@ -169,6 +166,7 @@ class DSTProAssistTraining:
             max_seq_len=model_cfg.max_seq_len,
             use_speaking_decision_head=model_cfg.use_speaking_decision_head,
             use_dst_update_head=model_cfg.use_dst_update_head,
+            use_separate_generation_heads=model_cfg.use_separate_generation_heads,
             binary_decision_head_type=model_cfg.binary_decision_head_type,
             binary_loss_weight=model_cfg.binary_loss_weight,
         )
@@ -227,10 +225,6 @@ class DSTProAssistTraining:
             model_cfg.llm_pretrained, **load_kwargs
         )
 
-        # Initialize multimodal modules
-        self.model.init_multimodal_modules()
-        self.logger.info("✓ Initialized multimodal modules")
-
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(model_cfg.llm_pretrained)
 
@@ -256,6 +250,11 @@ class DSTProAssistTraining:
         self.model.config.dst_gen_token_id = config.dst_gen_token_id
         self.model.config.asst_gen_token_id = config.asst_gen_token_id
 
+        # Initialize multimodal modules AFTER tokenizer resize so generation heads (if enabled)
+        # use the final vocab size.
+        self.model.init_multimodal_modules()
+        self.logger.info("✓ Initialized multimodal modules")
+
         # Set pad token
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
@@ -275,7 +274,24 @@ class DSTProAssistTraining:
             self.logger.info("Applying LoRA to model...")
             # Convert ListConfig to list to avoid JSON serialization issues
             target_modules = list(lora_cfg.lora_target_modules)
-            modules_to_save = list(lora_cfg.modules_to_save)
+            
+            # Build modules_to_save list
+            modules_to_save = [
+                "mm_projector",
+                "speaking_decision_head",
+                "dst_update_head",
+            ]
+            
+            # Add generation heads based on model configuration
+            use_separate_heads = getattr(self.model.config, 'use_separate_generation_heads', False)
+            if use_separate_heads:
+                modules_to_save.extend(["speaking_generation_head", "dst_generation_head"])
+                self.logger.info("✓ Using separate generation heads")
+            else:
+                modules_to_save.append("lm_head")
+                self.logger.info("✓ Using single lm_head")
+            
+            self.logger.info(f"  modules_to_save: {modules_to_save}")
 
             lora_config = get_lora_config(
                 lora_r=lora_cfg.lora_r,

@@ -48,6 +48,7 @@ class DSTProActConfig(PretrainedConfig):
         eos_token_id: Optional[int] = None,
         use_speaking_decision_head: bool = True,
         use_dst_update_head: bool = True,
+        use_separate_generation_heads: bool = False,
         binary_decision_head_type: str = "linear",
         binary_loss_weight: float = 1.0,
         exceed_context_handling: str = "drop_all",
@@ -70,6 +71,7 @@ class DSTProActConfig(PretrainedConfig):
         self.eos_token_id = eos_token_id
         self.use_speaking_decision_head = use_speaking_decision_head
         self.use_dst_update_head = use_dst_update_head
+        self.use_separate_generation_heads = use_separate_generation_heads
         self.binary_decision_head_type = binary_decision_head_type
         self.binary_loss_weight = binary_loss_weight
         self.attn_implementation = attn_implementation

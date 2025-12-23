@@ -62,29 +62,41 @@ class DSTProActModelMixin(AutoModelForCausalLM):
                 )
             self.dst_update_head.to(self.device, self.dtype)
 
-        # Separate generation heads for speaking and DST
-        # Initialize from base lm_head if available, otherwise random init
-        vocab_size = self.config.vocab_size
+        # Separate generation heads for speaking and DST (optional - controlled by config)
+        if self.config.use_separate_generation_heads:
+            vocab_size = self.config.vocab_size
 
-        self.speaking_generation_head = nn.Linear(lm_input_size, vocab_size, bias=False)
-        self.dst_generation_head = nn.Linear(lm_input_size, vocab_size, bias=False)
+            self.speaking_generation_head = nn.Linear(
+                lm_input_size, vocab_size, bias=False
+            )
+            self.dst_generation_head = nn.Linear(lm_input_size, vocab_size, bias=False)
 
-        # Copy weights from original lm_head if it exists
-        if hasattr(self, "lm_head") and self.lm_head is not None:
-            logger.info("Initializing separate generation heads from lm_head")
-            self.speaking_generation_head.weight.data = self.lm_head.weight.data.clone()
-            self.dst_generation_head.weight.data = self.lm_head.weight.data.clone()
+            # Copy weights from original lm_head if it exists
+            if hasattr(self, "lm_head") and self.lm_head is not None:
+                logger.info("Initializing separate generation heads from lm_head")
+                self.speaking_generation_head.weight.data = (
+                    self.lm_head.weight.data.clone()
+                )
+                self.dst_generation_head.weight.data = self.lm_head.weight.data.clone()
+            else:
+                logger.info(
+                    "Initializing separate generation heads with random weights"
+                )
+
+            self.speaking_generation_head.to(self.device, self.dtype)
+            self.dst_generation_head.to(self.device, self.dtype)
+
+            logger.info(
+                f"✓ Initialized separate generation heads: speaking_generation_head, dst_generation_head"
+            )
         else:
-            logger.info("Initializing separate generation heads with random weights")
-
-        self.speaking_generation_head.to(self.device, self.dtype)
-        self.dst_generation_head.to(self.device, self.dtype)
+            # Single head mode - use existing lm_head
+            self.speaking_generation_head = None
+            self.dst_generation_head = None
+            logger.info(f"✓ Using single lm_head for generation")
 
         logger.info(
             f"✓ Initialized multimodal modules ({mm_feature_size} -> {lm_input_size})"
-        )
-        logger.info(
-            f"✓ Initialized separate generation heads: speaking_generation_head, dst_generation_head"
         )
 
     def mm_feature_proj(self, features: torch.Tensor) -> torch.Tensor:
@@ -189,11 +201,16 @@ class DSTProActModelMixin(AutoModelForCausalLM):
         first_outputs = None
 
         # Select which generation head to use
-        generation_head = (
-            self.dst_generation_head if use_dst_head else self.speaking_generation_head
-        )
-        if generation_head is None:
-            generation_head = self.lm_head  # Fallback
+        if use_dst_head:
+            if self.dst_generation_head is not None:
+                generation_head = self.dst_generation_head
+            else:
+                generation_head = self.lm_head
+        else:
+            if self.speaking_generation_head is not None:
+                generation_head = self.speaking_generation_head
+            else:
+                generation_head = self.lm_head
 
         for i in range(max_length):
             # Get hidden states from base model
@@ -367,25 +384,21 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
         if self.training and (
             speaking_gen_labels is not None or dst_gen_labels is not None
         ):
-            # Training: compute logits from both heads, losses will be computed separately
-            speaking_logits = (
-                self.speaking_generation_head(hidden_states)
-                if self.speaking_generation_head
-                else None
-            )
-            dst_logits = (
-                self.dst_generation_head(hidden_states)
-                if self.dst_generation_head
-                else None
-            )
-
-            # Store both for loss computation
-            outputs.speaking_generation_logits = speaking_logits
-            outputs.dst_generation_logits = dst_logits
-            # Keep unified logits for backward compatibility (use speaking by default)
-            outputs.logits = (
-                speaking_logits if speaking_logits is not None else dst_logits
-            )
+            # Training: compute logits from both heads (if separate heads enabled) or single head
+            if self.config.use_separate_generation_heads:
+                speaking_logits = self.speaking_generation_head(hidden_states)
+                dst_logits = self.dst_generation_head(hidden_states)
+                # Store both for loss computation
+                outputs.speaking_generation_logits = speaking_logits
+                outputs.dst_generation_logits = dst_logits
+                # Keep unified logits for backward compatibility (use speaking by default)
+                outputs.logits = speaking_logits
+            else:
+                # Single head mode: use lm_head for both tasks
+                unified_logits = self.lm_head(hidden_states)
+                outputs.speaking_generation_logits = unified_logits
+                outputs.dst_generation_logits = unified_logits
+                outputs.logits = unified_logits
         else:
             # Inference: need to determine which head to use
             # If we have binary predictions, use them; otherwise default to speaking

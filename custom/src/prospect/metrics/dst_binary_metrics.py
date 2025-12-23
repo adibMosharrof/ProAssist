@@ -64,16 +64,22 @@ class DSTBinaryMetrics(BaseMetric):
                 elif role == "DST_UPDATE":
                     dst_update_labels[start_idx] = 1
         
-        # Extract predictions
+        # Extract predictions from binary heads
         speaking_preds_frame = []
         dst_update_preds_frame = []
         
         for frame_out in prediction:
-            # Speaking: Did we generate text?
-            speaking_preds_frame.append(1 if frame_out.gen else 0)
+            # Use binary head predictions, not whether text was generated
+            # If the output doesn't have these fields, fall back to text generation check
+            if hasattr(frame_out, 'speaking'):
+                speaking_preds_frame.append(frame_out.speaking)
+            else:
+                speaking_preds_frame.append(1 if frame_out.gen else 0)
             
-            # DST Update: Did we generate a DST update?
-            dst_update_preds_frame.append(1 if frame_out.dst_update else 0)
+            if hasattr(frame_out, 'dst_update_binary'):
+                dst_update_preds_frame.append(frame_out.dst_update_binary)
+            else:
+                dst_update_preds_frame.append(1 if frame_out.dst_update else 0)
             
         self.speaking_preds.extend(speaking_preds_frame)
         self.speaking_refs.extend(speaking_labels)
