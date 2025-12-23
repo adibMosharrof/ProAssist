@@ -209,12 +209,12 @@ def run_inference_on_video(self, sample):
 
 The model uses the **same LM head** for both DST updates and assistant responses. The "mode" is determined by which binary head triggers:
 
-| Condition | Action | Generated Content |
-|-----------|--------|-------------------|
-| `dst_update_logits > threshold` | Generate DST update | `"S3->complete"` |
-| `speaking_logits > threshold` | Generate response | `"Great job! Now attach..."` |
-| Both triggered | Generate both sequentially | DST first, then response |
-| Neither triggered | Skip generation | Empty string |
+| Condition                       | Action                     | Generated Content            |
+| ------------------------------- | -------------------------- | ---------------------------- |
+| `dst_update_logits > threshold` | Generate DST update        | `"S3->complete"`             |
+| `speaking_logits > threshold`   | Generate response          | `"Great job! Now attach..."` |
+| Both triggered                  | Generate both sequentially | DST first, then response     |
+| Neither triggered               | Skip generation            | Empty string                 |
 
 **Important:** DST_UPDATE and assistant turns can occur at the same timestamp. In training data, DST_UPDATE always precedes assistant at the same time. During inference, we respect this order.
 
@@ -360,17 +360,17 @@ When cache overflows, we reset and inject the updated schema.
 
 We reuse ProAssist's evaluation infrastructure for turn-taking and NLG metrics:
 
-| Metric | Description | Source |
-|--------|-------------|--------|
-| `jaccard_index` | Matched / (Matched + Missed + Redundant) | `find_match()` |
-| `precision` | Matched / (Matched + Redundant) | `find_match()` |
-| `recall` | Matched / (Matched + Missed) | `find_match()` |
-| `F1` | 2 * P * R / (P + R) | Derived |
-| `missing_rate` | Missed / (Matched + Missed) | `find_match()` |
-| `redundant_rate` | Redundant / (Matched + Redundant) | `find_match()` |
-| `BLEU-1/2/3/4` | N-gram overlap | `NLGEval` |
-| `METEOR` | Alignment-based metric | `NLGEval` |
-| `CIDEr` | Consensus-based metric | `NLGEval` |
+| Metric           | Description                              | Source         |
+| ---------------- | ---------------------------------------- | -------------- |
+| `jaccard_index`  | Matched / (Matched + Missed + Redundant) | `find_match()` |
+| `precision`      | Matched / (Matched + Redundant)          | `find_match()` |
+| `recall`         | Matched / (Matched + Missed)             | `find_match()` |
+| `F1`             | 2 * P * R / (P + R)                      | Derived        |
+| `missing_rate`   | Missed / (Matched + Missed)              | `find_match()` |
+| `redundant_rate` | Redundant / (Matched + Redundant)        | `find_match()` |
+| `BLEU-1/2/3/4`   | N-gram overlap                           | `NLGEval`      |
+| `METEOR`         | Alignment-based metric                   | `NLGEval`      |
+| `CIDEr`          | Consensus-based metric                   | `NLGEval`      |
 
 ### 5.2 DST-Specific Metrics (New)
 
@@ -381,18 +381,18 @@ Similar to ProAssist's "when to speak" evaluation, we evaluate:
 1. **Speaking Decision:** Did the model correctly decide WHEN to speak?
 2. **DST Update Decision:** Did the model correctly decide WHEN to update DST?
 
-| Metric | Description |
-|--------|-------------|
-| `speaking_balanced_accuracy` | Balanced Accuracy of speaking binary decision |
-| `speaking_precision` | Precision of speaking predictions |
-| `speaking_recall` | Recall of speaking predictions |
-| `speaking_f1` | F1 score for speaking decision |
-| `dst_update_accuracy` | Accuracy of DST update binary decision |
-| `dst_update_precision` | Precision of DST update predictions |
-| `dst_update_recall` | Recall of DST update predictions |
-| `dst_update_recall` | Recall of DST update predictions |
-| `dst_update_f1` | F1 score for DST update decision |
-| `dst_update_balanced_acc` | **Balanced Accuracy** (handles class imbalance) |
+| Metric                       | Description                                     |
+| ---------------------------- | ----------------------------------------------- |
+| `speaking_balanced_accuracy` | Balanced Accuracy of speaking binary decision   |
+| `speaking_precision`         | Precision of speaking predictions               |
+| `speaking_recall`            | Recall of speaking predictions                  |
+| `speaking_f1`                | F1 score for speaking decision                  |
+| `dst_update_accuracy`        | Accuracy of DST update binary decision          |
+| `dst_update_precision`       | Precision of DST update predictions             |
+| `dst_update_recall`          | Recall of DST update predictions                |
+| `dst_update_recall`          | Recall of DST update predictions                |
+| `dst_update_f1`              | F1 score for DST update decision                |
+| `dst_update_balanced_acc`    | **Balanced Accuracy** (handles class imbalance) |
 
 **Note:** We use `balanced_accuracy_score` for both speaking and DST update decisions to account for the high imbalance (most frames are silent/no-update).
 
@@ -430,11 +430,11 @@ def evaluate_dst_update(pred_text: str, ref_text: str) -> dict:
     }
 ```
 
-| Metric | Description |
-|--------|-------------|
-| `dst_step_accuracy` | % of DST updates with correct step ID |
-| `dst_transition_accuracy` | % of DST updates with correct transition |
-| `dst_exact_match` | % of DST updates with both correct |
+| Metric                    | Description                                  |
+| ------------------------- | -------------------------------------------- |
+| `dst_step_accuracy`       | % of DST updates with correct step ID        |
+| `dst_transition_accuracy` | % of DST updates with correct transition     |
+| `dst_exact_match`         | % of DST updates with both correct           |
 | `dst_joint_goal_accuracy` | % of clips where ALL DST updates are correct |
 
 ### 5.3 Evaluation Flow
@@ -545,12 +545,12 @@ for frame_idx in range(len(embeddings)):
 
 Based on typical SmolVLM2 performance on A100 GPU:
 
-| Operation | Time per Frame | Notes |
-|-----------|---------------|-------|
-| Forward pass (with KV cache) | ~5-15ms | Incremental, only new tokens |
-| Binary head decision | ~0.1ms | Two linear layers |
-| Text generation (50 tokens) | ~100-200ms | Autoregressive |
-| KV cache management | ~1ms | Concatenation/trimming |
+| Operation                    | Time per Frame | Notes                        |
+| ---------------------------- | -------------- | ---------------------------- |
+| Forward pass (with KV cache) | ~5-15ms        | Incremental, only new tokens |
+| Binary head decision         | ~0.1ms         | Two linear layers            |
+| Text generation (50 tokens)  | ~100-200ms     | Autoregressive               |
+| KV cache management          | ~1ms           | Concatenation/trimming       |
 
 **Example Video (1000 frames, 5% speaking rate):**
 - Forward passes: 1000 × 10ms = 10s
@@ -593,25 +593,25 @@ inference:
 
 ### 8.1 Key Differences from ProAssist
 
-| Aspect | ProAssist | DST Inference |
-|--------|-----------|---------------|
-| Speaking Decision | W2T probability head | Binary classification head (sigmoid) |
-| Task Progress | Generated summary | DST state dictionary |
-| Context Refresh | Summary + Task Knowledge | Full DST Schema + Current State |
-| Output Types | Response only | Response AND DST update |
-| Content Evaluation | Semantic similarity | Exact match (for DST) |
+| Aspect             | ProAssist                | DST Inference                        |
+| ------------------ | ------------------------ | ------------------------------------ |
+| Speaking Decision  | W2T probability head     | Binary classification head (sigmoid) |
+| Task Progress      | Generated summary        | DST state dictionary                 |
+| Context Refresh    | Summary + Task Knowledge | Full DST Schema + Current State      |
+| Output Types       | Response only            | Response AND DST update              |
+| Content Evaluation | Semantic similarity      | Exact match (for DST)                |
 
 ### 8.2 Components to Implement
 
-| Component | Source | Notes |
-|-----------|--------|-------|
-| Dataset | `DSTTrainingDataset` | Same class for train/eval |
-| `FrameOutput` | `mmassist.eval.runners.stream_inference` | Reuse directly |
-| `find_match()` | `mmassist.eval.evaluators.pred_match` | Reuse directly |
-| `NLGEval` | `mmassist.eval.metrics.nlg_scorer` | Reuse directly |
-| `DSTStreamRunner` | **NEW** | Frame-by-frame streaming with KV cache |
-| `DSTEvaluator` | **NEW** | ProAssist metrics + DST metrics |
-| `DSTMetricsCalculator` | **NEW** | Binary decision + exact match metrics |
+| Component              | Source                                   | Notes                                  |
+| ---------------------- | ---------------------------------------- | -------------------------------------- |
+| Dataset                | `DSTTrainingDataset`                     | Same class for train/eval              |
+| `FrameOutput`          | `mmassist.eval.runners.stream_inference` | Reuse directly                         |
+| `find_match()`         | `mmassist.eval.evaluators.pred_match`    | Reuse directly                         |
+| `NLGEval`              | `mmassist.eval.metrics.nlg_scorer`       | Reuse directly                         |
+| `DSTStreamRunner`      | **NEW**                                  | Frame-by-frame streaming with KV cache |
+| `DSTEvaluator`         | **NEW**                                  | ProAssist metrics + DST metrics        |
+| `DSTMetricsCalculator` | **NEW**                                  | Binary decision + exact match metrics  |
 
 ### 8.3 Metrics Summary
 
