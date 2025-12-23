@@ -34,9 +34,9 @@ class DSTProActModelMixin(AutoModelForCausalLM):
         )
         self.mm_projector.to(self.device, self.dtype)
         
-        # Speaking decision head
-        self.speaking_decision_head = None
-        if self.config.use_speaking_decision_head:
+        # Binary decision heads and separate generation heads (controlled by use_separate_generation_heads)
+        if self.config.use_separate_generation_heads:
+            # Speaking decision head
             if "linear" in self.config.binary_decision_head_type:
                 self.speaking_decision_head = nn.Linear(lm_input_size, 1)
             else:
@@ -46,10 +46,8 @@ class DSTProActModelMixin(AutoModelForCausalLM):
                     nn.Linear(lm_input_size // 2, 1),
                 )
             self.speaking_decision_head.to(self.device, self.dtype)
-        
-        # DST update decision head
-        self.dst_update_head = None
-        if self.config.use_dst_update_head:
+            
+            # DST update decision head
             if "linear" in self.config.binary_decision_head_type:
                 self.dst_update_head = nn.Linear(lm_input_size, 1)
             else:
@@ -59,6 +57,10 @@ class DSTProActModelMixin(AutoModelForCausalLM):
                     nn.Linear(lm_input_size // 2, 1),
                 )
             self.dst_update_head.to(self.device, self.dtype)
+        else:
+            # Single head mode - no binary decision heads
+            self.speaking_decision_head = None
+            self.dst_update_head = None
         
         # Separate generation heads for speaking and DST (optional - controlled by config)
         if self.config.use_separate_generation_heads:
@@ -280,11 +282,8 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
         **kwargs,
     ) -> CausalLMOutputWithPast:
         """Forward pass with multimodal fusion and binary heads."""
-        output_hidden_states = (
-            self.config.use_speaking_decision_head or 
-            self.config.use_dst_update_head or 
-            output_hidden_states
-        )
+        # Always need hidden states for binary heads
+        output_hidden_states = True
         
         if inputs_embeds is None:
             inputs_embeds = self.joint_embed(input_ids, image_embeds)

@@ -46,8 +46,6 @@ class DSTProActConfig(PretrainedConfig):
         asst_gen_token: str = "[ASST]",
         asst_gen_token_id: Optional[int] = None,
         eos_token_id: Optional[int] = None,
-        use_speaking_decision_head: bool = True,
-        use_dst_update_head: bool = True,
         use_separate_generation_heads: bool = False,
         binary_decision_head_type: str = "linear",
         binary_loss_weight: float = 1.0,
@@ -69,8 +67,6 @@ class DSTProActConfig(PretrainedConfig):
         self.asst_gen_token = asst_gen_token
         self.asst_gen_token_id = asst_gen_token_id
         self.eos_token_id = eos_token_id
-        self.use_speaking_decision_head = use_speaking_decision_head
-        self.use_dst_update_head = use_dst_update_head
         self.use_separate_generation_heads = use_separate_generation_heads
         self.binary_decision_head_type = binary_decision_head_type
         self.binary_loss_weight = binary_loss_weight
@@ -111,8 +107,6 @@ class DSTProActLlamaConfig(LlamaConfig, DSTProActConfig):
         'dst_gen_token_id': None,
         'asst_gen_token': "[ASST]",
         'asst_gen_token_id': None,
-        'use_speaking_decision_head': True,
-        'use_dst_update_head': True,
         'binary_decision_head_type': "linear",
         'binary_loss_weight': 1.0,
         'exceed_context_handling': "drop_all",
