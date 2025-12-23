@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 class DSTFrameOutput(FrameOutput):
     dst_update: Optional[str] = None
     dst_state: Optional[Dict] = None
+    speaking_prob: float = 0.0  # Probability of speaking
+    dst_prob: float = 0.0  # Probability of DST update
+    speaking: int = 0  # Binary speaking decision
+    dst_update_binary: int = 0  # Binary DST update decision
 
 class DSTStreamRunner:
     """
@@ -125,6 +129,7 @@ class DSTStreamRunner:
                 past_key_values=kv_cache,
                 max_length=1,  # Just 1 token for frame processing
                 output_hidden_states=True,  # Request binary head logits
+                use_dst_head=False,  # Use speaking head for frame processing
             )
             
             # 4. Update KV Cache with new state
@@ -139,26 +144,46 @@ class DSTStreamRunner:
             dst_logits = model_outputs.get('dst_update_logits', None)
             if dst_logits is not None:
                 dst_prob = torch.sigmoid(dst_logits[:, -1])
-                dst_update_triggered = dst_prob > self.dst_threshold
+                # Use higher threshold (0.6) to avoid spurious DST updates with garbage text
+                dst_update_triggered = dst_prob > max(self.dst_threshold, 0.6)
             else:
                 dst_update_triggered = False
             
             dst_text = None
             if dst_update_triggered:
                 stats["dst_triggered"] += 1
-                # DST updates are short (e.g., "S1->start"), so generate up to 10 tokens
-                # Convert output token IDs to embeddings for generation
-                gen_input_embeds = self.model.get_input_embeddings()(output_ids)
+                # Generate DST update by adding [DST] token to trigger generation
+                dst_token_id = self.tokenizer.convert_tokens_to_ids("[DST]")
+                dst_input_ids = torch.tensor([[dst_token_id]], dtype=torch.long, device=self.device)
+                dst_input_embeds = self.model.get_input_embeddings()(dst_input_ids)
+                
+                # Generate DST text with explicit stopping
+                # Use short max_length since DST updates are brief (e.g., "S1->start")
                 dst_gen_ids, kv_cache, _ = self.model.fast_greedy_generate(
-                    inputs_embeds=gen_input_embeds,
+                    inputs_embeds=dst_input_embeds,
                     past_key_values=kv_cache,
-                    max_length=10,
+                    max_length=15,  # Short for DST updates
+                    use_dst_head=True,  # Use DST generation head for structured output
                 )
-                # Decode generated tokens
-                dst_text = self.tokenizer.decode(dst_gen_ids[0], skip_special_tokens=True)
+                
+                # Decode and clean
+                dst_text = self.tokenizer.decode(dst_gen_ids[0], skip_special_tokens=True).strip()
+                
+                # Log what was generated
+                logger.debug(f"Frame {frame_idx} DST generation: token_ids={dst_gen_ids[0][:10].tolist()}, text={dst_text[:50]}")
+                
+                # Detect garbage generation (repeated tokens)
+                if dst_text:
+                    words = dst_text.split()
+                    if len(words) > 3 and len(set(words)) == 1:
+                        # All words are the same - garbage
+                        logger.warning(f"Frame {frame_idx}: Detected garbage DST generation: {dst_text[:30]}")
+                        dst_text = ""
+                
                 # Update cache with DST generation results
                 self.cache_manager.update_cache(kv_cache)
-                dst_state = self._update_state(dst_state, dst_text)
+                if dst_text:  # Only update state if we got valid text
+                    dst_state = self._update_state(dst_state, dst_text)
 
             # 6. Check Speaking Decision
             speaking_logits = model_outputs.get('speaking_logits', None)
@@ -171,16 +196,33 @@ class DSTStreamRunner:
             gen_text = ""  # Default to empty string (no-talk sentinel)
             if speaking_triggered:
                 stats["speaking_triggered"] += 1
-                # Generate assistant response (longer, use max_length=50)
-                # Convert output token IDs to embeddings for generation
-                gen_input_embeds = self.model.get_input_embeddings()(output_ids)
+                # Generate assistant response by adding [ASST] token to trigger generation
+                asst_token_id = self.tokenizer.convert_tokens_to_ids("[ASST]")
+                asst_input_ids = torch.tensor([[asst_token_id]], dtype=torch.long, device=self.device)
+                asst_input_embeds = self.model.get_input_embeddings()(asst_input_ids)
+                
+                # Generate assistant text with explicit stopping
                 gen_ids, kv_cache, _ = self.model.fast_greedy_generate(
-                    inputs_embeds=gen_input_embeds,
+                    inputs_embeds=asst_input_embeds,
                     past_key_values=kv_cache,
-                    max_length=50,
+                    max_length=40,  # Moderate length for responses
+                    use_dst_head=False,  # Use speaking generation head for natural language
                 )
-                # Decode generated tokens
-                gen_text = self.tokenizer.decode(gen_ids[0], skip_special_tokens=True)
+                
+                # Decode and clean
+                gen_text = self.tokenizer.decode(gen_ids[0], skip_special_tokens=True).strip()
+                
+                # Log what was generated
+                logger.debug(f"Frame {frame_idx} Speaking generation: token_ids={gen_ids[0][:10].tolist()}, text={gen_text[:50]}")
+                
+                # Detect garbage generation (repeated tokens)
+                if gen_text:
+                    words = gen_text.split()
+                    if len(words) > 5 and len(set(words)) == 1:
+                        # All words are the same - garbage
+                        logger.warning(f"Frame {frame_idx}: Detected garbage speaking generation: {gen_text[:30]}")
+                        gen_text = ""
+                
                 # Update cache with response generation results
                 self.cache_manager.update_cache(kv_cache)
             
@@ -192,7 +234,10 @@ class DSTStreamRunner:
                 ref_speaking = ""
             ref_dst_update = self._get_reference_text(conversation, frame_idx, "DST_UPDATE")
 
-            # 7. Store Output
+            # 7. Store Output with probabilities
+            speaking_prob_val = torch.sigmoid(speaking_logits[:, -1]).item() if speaking_logits is not None else 0.0
+            dst_prob_val = torch.sigmoid(dst_logits[:, -1]).item() if dst_logits is not None else 0.0
+            
             outputs.append(DSTFrameOutput(
                 gen=gen_text,
                 ref=ref_speaking,
@@ -200,6 +245,10 @@ class DSTStreamRunner:
                 timestamp_in_stream=frame_idx / self.fps,
                 dst_update=dst_text,
                 dst_state=dst_state.copy(),
+                speaking_prob=speaking_prob_val,
+                dst_prob=dst_prob_val,
+                speaking=1 if speaking_triggered else 0,
+                dst_update_binary=1 if dst_update_triggered else 0,
             ))
             
             # 8. Context Management

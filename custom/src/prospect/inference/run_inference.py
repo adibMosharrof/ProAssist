@@ -29,6 +29,8 @@ if not OmegaConf.has_resolver("project_root"):
 class DSTInferenceDataset(DSTProAssistDataset):
     """Extended dataset for inference with embedding loading."""
     def __init__(self, *args, siglip_features_dir=None, **kwargs):
+        # Pass siglip_features_dir to parent class so it can filter during init
+        kwargs['siglip_features_dir'] = siglip_features_dir
         super().__init__(*args, **kwargs)
         self.siglip_features_dir = Path(siglip_features_dir) if siglip_features_dir else None
 
@@ -60,17 +62,31 @@ class DSTInferenceDataset(DSTProAssistDataset):
         return torch.stack(embeddings, dim=0)
 
     def _build_conversation(self, sample):
-        """Convert sparse events to conversation format for evaluation."""
-        conversation = []
-        events = sample.get("events", [])
+        """
+        Extract conversation from sample for evaluation.
         
+        The data now uses the conversation format (same as training):
+        - Each turn has: role, content, start_frame, (optional) speaking, dst_update
+        """
+        # Return conversation directly if it exists in the expected format
+        conversation = sample.get("conversation", [])
+        
+        if conversation:
+            return conversation
+        
+        # Fallback: convert old events format if present (for backward compatibility)
+        events = sample.get("events", [])
+        if not events:
+            return []
+        
+        converted_conversation = []
         for event in events:
             frame_idx = event["frame_idx"]
             
             # Assistant response (singular, can be None)
             response = event.get("response")
             if response:
-                conversation.append({
+                converted_conversation.append({
                     "role": "assistant", 
                     "start_frame": frame_idx,
                     "content": response
@@ -81,12 +97,12 @@ class DSTInferenceDataset(DSTProAssistDataset):
                 # Format: "ID->Transition"
                 if "->" in update:
                     step_id, transition = update.split("->")
-                    conversation.append({
+                    converted_conversation.append({
                         "role": "DST_UPDATE",
                         "start_frame": frame_idx,
                         "content": [{"id": step_id.strip(), "transition": transition.strip()}]
                     })
-        return conversation
+        return converted_conversation
 
 class InferencePipeline:
     def __init__(self, cfg: DictConfig):
@@ -258,7 +274,9 @@ class InferencePipeline:
             metrics=metrics,
             output_dir=str(self.output_dir),
             num_gpus=self.cfg.inference.num_gpus,
-            fps=self.cfg.inference.fps
+            fps=self.cfg.inference.fps,
+            speaking_threshold=self.cfg.inference.speaking_threshold,
+            dst_threshold=self.cfg.inference.dst_threshold
         )
         
         results = evaluator.evaluate()
