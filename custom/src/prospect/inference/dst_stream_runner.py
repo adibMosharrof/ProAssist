@@ -8,6 +8,7 @@ from custom.src.prospect.utils.cache_manager import KVCacheManager
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class DSTFrameOutput(FrameOutput):
     dst_update: Optional[str] = None
@@ -17,17 +18,18 @@ class DSTFrameOutput(FrameOutput):
     speaking: int = 0  # Binary speaking decision
     dst_update_binary: int = 0  # Binary DST update decision
 
+
 class DSTStreamRunner:
     """
     Frame-based streaming runner for DST inference.
-    
+
     Features:
     - Sequential frame processing
     - Continuous KV cache management
     - Binary head decisions (Speaking, DST Update)
     - Context overflow handling (Full DST Schema Refresh)
     """
-    
+
     def __init__(
         self,
         model: DSTProActLlamaForCausalLM,
@@ -49,17 +51,17 @@ class DSTStreamRunner:
         self.reserved_seq_len = reserved_seq_len
         self.device = device
         self.worker_id = worker_id
-        
+
         # Initialize Cache Manager
         self.cache_manager = KVCacheManager(context_strategy=None)
-    
+
     @property
     def tokenizer(self):
         """Get tokenizer from processor or use processor directly if it's a tokenizer."""
-        if hasattr(self.processor, 'tokenizer'):
+        if hasattr(self.processor, "tokenizer"):
             return self.processor.tokenizer
         return self.processor
-        
+
     def run_inference_on_video(self, sample: Dict[str, Any]) -> List[FrameOutput]:
         """
         Run streaming inference on a single video sample.
@@ -68,7 +70,7 @@ class DSTStreamRunner:
         dst_schema = sample["dst"]
         conversation = sample.get("conversation", [])
         clip_start_frame = sample.get("start_frame_idx", 0)
-        
+
         # Track trigger statistics
         stats = {
             "total_frames": len(embeddings),
@@ -76,52 +78,64 @@ class DSTStreamRunner:
             "dst_triggered": 0,
             "both_triggered": 0,
         }
-        
+
         # Reset cache manager
         self.cache_manager.reset()
-        
+
         # Initialize state
         dst_state = {}  # {"S1": "completed", ...}
         if "initial_dst_state" in sample and sample["initial_dst_state"]:
             dst_state = sample["initial_dst_state"].copy()
-            
+
         # Initial system prompt
         system_prompt = self._build_updated_schema_prompt(dst_schema, dst_state)
-        
+
         # Tokenize system prompt using tokenizer
         messages = [{"role": "system", "content": system_prompt}]
-        text_input = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
-        
-        last_msg_tokens = self.tokenizer(text_input, return_tensors="pt").input_ids.to(self.device)
-        
+        text_input = self.tokenizer.apply_chat_template(
+            messages, add_generation_prompt=True, tokenize=False
+        )
+
+        last_msg_tokens = self.tokenizer(text_input, return_tensors="pt").input_ids.to(
+            self.device
+        )
+
         outputs = []
-        
+
         import sys
         from tqdm import tqdm
-        for frame_idx in tqdm(range(len(embeddings)), desc=f"Worker {self.worker_id} Frames", leave=False, file=sys.__stderr__, position=self.worker_id):
-        # for frame_idx in tqdm(range(400), desc=f"Worker {self.worker_id} Frames", leave=False, file=sys.__stderr__, position=self.worker_id):
+
+        for frame_idx in tqdm(
+            range(len(embeddings)),
+            desc=f"Worker {self.worker_id} Frames",
+            leave=False,
+            file=sys.__stderr__,
+            position=self.worker_id,
+        ):
+            # for frame_idx in tqdm(range(400), desc=f"Worker {self.worker_id} Frames", leave=False, file=sys.__stderr__, position=self.worker_id):
             # 1. Prepare Input
-            frame_embed = embeddings[frame_idx].unsqueeze(0).unsqueeze(0) # [1, 1, 2048]
-            
+            frame_embed = (
+                embeddings[frame_idx].unsqueeze(0).unsqueeze(0)
+            )  # [1, 1, 2048]
+
             if last_msg_tokens is not None:
-                img_token_id = getattr(self.model.config, 'img_token_id', 49190)
+                img_token_id = getattr(self.model.config, "img_token_id", 49190)
                 img_token = torch.tensor([[img_token_id]], device=self.device)
                 input_ids = torch.cat([img_token, last_msg_tokens], dim=1)
                 last_msg_tokens = None
             else:
-                img_token_id = getattr(self.model.config, 'img_token_id', 49190)
+                img_token_id = getattr(self.model.config, "img_token_id", 49190)
                 input_ids = torch.tensor([[img_token_id]], device=self.device)
-            
+
             # Get current cache
             kv_cache = self.cache_manager.get_cache()
-            
+
             # 2. Create joint embeddings (ProAssist pattern)
             # Use joint_embed to combine vision + text embeddings
             inputs_embeds = self.model.joint_embed(
-                input_ids=input_ids,
-                image_embeds=frame_embed
+                input_ids=input_ids, image_embeds=frame_embed
             )
-            
+
             # 3. Single forward pass: get tokens AND binary head logits
             # Returns (token_ids, kv_cache, model_outputs)
             output_ids, kv_cache, model_outputs = self.model.fast_greedy_generate(
@@ -131,32 +145,34 @@ class DSTStreamRunner:
                 output_hidden_states=True,  # Request binary head logits
                 use_dst_head=False,  # Use speaking head for frame processing
             )
-            
+
             # 4. Update KV Cache with new state
             self.cache_manager.update_cache(kv_cache)
             cache_len = self.cache_manager.get_cache_length()
-            
+
             # Log cache growth every 50 frames
             if frame_idx % 50 == 0 and frame_idx > 0:
                 logger.debug(f"Frame {frame_idx}: KV cache length = {cache_len} tokens")
-            
+
             # Get binary head decisions from model outputs dictionary
-            dst_logits = model_outputs.get('dst_update_logits', None)
+            dst_logits = model_outputs.get("dst_update_logits", None)
             if dst_logits is not None:
                 dst_prob = torch.sigmoid(dst_logits[:, -1])
                 # Use higher threshold (0.6) to avoid spurious DST updates with garbage text
                 dst_update_triggered = dst_prob > max(self.dst_threshold, 0.6)
             else:
                 dst_update_triggered = False
-            
+
             dst_text = None
             if dst_update_triggered:
                 stats["dst_triggered"] += 1
                 # Generate DST update by adding [DST] token to trigger generation
                 dst_token_id = self.tokenizer.convert_tokens_to_ids("[DST]")
-                dst_input_ids = torch.tensor([[dst_token_id]], dtype=torch.long, device=self.device)
+                dst_input_ids = torch.tensor(
+                    [[dst_token_id]], dtype=torch.long, device=self.device
+                )
                 dst_input_embeds = self.model.get_input_embeddings()(dst_input_ids)
-                
+
                 # Generate DST text with explicit stopping
                 # Use short max_length since DST updates are brief (e.g., "S1->start")
                 dst_gen_ids, kv_cache, _ = self.model.fast_greedy_generate(
@@ -165,42 +181,50 @@ class DSTStreamRunner:
                     max_length=15,  # Short for DST updates
                     use_dst_head=True,  # Use DST generation head for structured output
                 )
-                
+
                 # Decode and clean
-                dst_text = self.tokenizer.decode(dst_gen_ids[0], skip_special_tokens=True).strip()
-                
+                dst_text = self.tokenizer.decode(
+                    dst_gen_ids[0], skip_special_tokens=True
+                ).strip()
+
                 # Log what was generated
-                logger.debug(f"Frame {frame_idx} DST generation: token_ids={dst_gen_ids[0][:10].tolist()}, text={dst_text[:50]}")
-                
+                logger.debug(
+                    f"Frame {frame_idx} DST generation: token_ids={dst_gen_ids[0][:10].tolist()}, text={dst_text[:50]}"
+                )
+
                 # Detect garbage generation (repeated tokens)
                 if dst_text:
                     words = dst_text.split()
                     if len(words) > 3 and len(set(words)) == 1:
                         # All words are the same - garbage
-                        logger.warning(f"Frame {frame_idx}: Detected garbage DST generation: {dst_text[:30]}")
+                        logger.warning(
+                            f"Frame {frame_idx}: Detected garbage DST generation: {dst_text[:30]}"
+                        )
                         dst_text = ""
-                
+
                 # Update cache with DST generation results
                 self.cache_manager.update_cache(kv_cache)
                 if dst_text:  # Only update state if we got valid text
                     dst_state = self._update_state(dst_state, dst_text)
 
             # 6. Check Speaking Decision
-            speaking_logits = model_outputs.get('speaking_logits', None)
+            speaking_logits = model_outputs.get("speaking_logits", None)
             if speaking_logits is not None:
                 speaking_prob = torch.sigmoid(speaking_logits[:, -1])
                 speaking_triggered = speaking_prob > self.speaking_threshold
             else:
                 speaking_triggered = False
-            
+
             gen_text = ""  # Default to empty string (no-talk sentinel)
             if speaking_triggered:
                 stats["speaking_triggered"] += 1
                 # Generate assistant response by adding [ASST] token to trigger generation
                 asst_token_id = self.tokenizer.convert_tokens_to_ids("[ASST]")
-                asst_input_ids = torch.tensor([[asst_token_id]], dtype=torch.long, device=self.device)
+                asst_input_ids = torch.tensor(
+                    [[asst_token_id]], dtype=torch.long, device=self.device
+                )
                 asst_input_embeds = self.model.get_input_embeddings()(asst_input_ids)
-                
+
                 # Generate assistant text with explicit stopping
                 gen_ids, kv_cache, _ = self.model.fast_greedy_generate(
                     inputs_embeds=asst_input_embeds,
@@ -208,75 +232,113 @@ class DSTStreamRunner:
                     max_length=40,  # Moderate length for responses
                     use_dst_head=False,  # Use speaking generation head for natural language
                 )
-                
+
                 # Decode and clean
-                gen_text = self.tokenizer.decode(gen_ids[0], skip_special_tokens=True).strip()
-                
+                gen_text = self.tokenizer.decode(
+                    gen_ids[0], skip_special_tokens=True
+                ).strip()
+
                 # Log what was generated
-                logger.debug(f"Frame {frame_idx} Speaking generation: token_ids={gen_ids[0][:10].tolist()}, text={gen_text[:50]}")
-                
+                logger.debug(
+                    f"Frame {frame_idx} Speaking generation: token_ids={gen_ids[0][:10].tolist()}, text={gen_text[:50]}"
+                )
+
                 # Detect garbage generation (repeated tokens)
                 if gen_text:
                     words = gen_text.split()
                     if len(words) > 5 and len(set(words)) == 1:
                         # All words are the same - garbage
-                        logger.warning(f"Frame {frame_idx}: Detected garbage speaking generation: {gen_text[:30]}")
+                        logger.warning(
+                            f"Frame {frame_idx}: Detected garbage speaking generation: {gen_text[:30]}"
+                        )
                         gen_text = ""
-                
+
                 # Update cache with response generation results
                 self.cache_manager.update_cache(kv_cache)
-            
+
             # 6. Get Ground Truth References
             # Use frame_idx directly since conversation events are relative to clip start
             # Default to empty string (no-talk sentinel) if no reference text found
-            ref_speaking = self._get_reference_text(conversation, frame_idx, "assistant")
+            ref_speaking = self._get_reference_text(
+                conversation, frame_idx, "assistant"
+            )
             if ref_speaking is None:
                 ref_speaking = ""
-            ref_dst_update = self._get_reference_text(conversation, frame_idx, "DST_UPDATE")
+            ref_dst_update = self._get_reference_text(
+                conversation, frame_idx, "DST_UPDATE"
+            )
 
             # 7. Store Output with probabilities
-            speaking_prob_val = torch.sigmoid(speaking_logits[:, -1]).item() if speaking_logits is not None else 0.0
-            dst_prob_val = torch.sigmoid(dst_logits[:, -1]).item() if dst_logits is not None else 0.0
-            
-            outputs.append(DSTFrameOutput(
-                gen=gen_text,
-                ref=ref_speaking,
-                frame_idx_in_stream=frame_idx,
-                timestamp_in_stream=frame_idx / self.fps,
-                dst_update=dst_text,
-                dst_state=dst_state.copy(),
-                speaking_prob=speaking_prob_val,
-                dst_prob=dst_prob_val,
-                speaking=1 if speaking_triggered else 0,
-                dst_update_binary=1 if dst_update_triggered else 0,
-            ))
-            
+            speaking_prob_val = (
+                torch.sigmoid(speaking_logits[:, -1]).item()
+                if speaking_logits is not None
+                else 0.0
+            )
+            dst_prob_val = (
+                torch.sigmoid(dst_logits[:, -1]).item()
+                if dst_logits is not None
+                else 0.0
+            )
+
+            outputs.append(
+                DSTFrameOutput(
+                    gen=gen_text,
+                    ref=ref_speaking,
+                    frame_idx_in_stream=frame_idx,
+                    timestamp_in_stream=frame_idx / self.fps,
+                    dst_update=dst_text,
+                    dst_state=dst_state.copy(),
+                    speaking_prob=speaking_prob_val,
+                    dst_prob=dst_prob_val,
+                    speaking=1 if speaking_triggered else 0,
+                    dst_update_binary=1 if dst_update_triggered else 0,
+                )
+            )
+
             # 8. Context Management
             if self._should_refresh_context(kv_cache):
                 current_cache_len = self.cache_manager.get_cache_length()
                 logger.warning(f"🔄 Context Overflow! Refreshing at frame {frame_idx}")
-                logger.warning(f"   Cache length: {current_cache_len} / {self.max_seq_len} (threshold: {self.max_seq_len - self.reserved_seq_len})")
-                self.cache_manager.reset() # Reset cache manager
+                logger.warning(
+                    f"   Cache length: {current_cache_len} / {self.max_seq_len} (threshold: {self.max_seq_len - self.reserved_seq_len})"
+                )
+                self.cache_manager.reset()  # Reset cache manager
                 kv_cache = None
-                
+
                 system_prompt = self._build_updated_schema_prompt(dst_schema, dst_state)
                 messages = [{"role": "system", "content": system_prompt}]
-                text_input = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
-                last_msg_tokens = self.tokenizer(text_input, return_tensors="pt").input_ids.to(self.device)
-                logger.info(f"   Rebuilt system prompt with DST state: {len(last_msg_tokens[0])} tokens")
-                
+                text_input = self.tokenizer.apply_chat_template(
+                    messages, add_generation_prompt=True, tokenize=False
+                )
+                last_msg_tokens = self.tokenizer(
+                    text_input, return_tensors="pt"
+                ).input_ids.to(self.device)
+                logger.info(
+                    f"   Rebuilt system prompt with DST state: {len(last_msg_tokens[0])} tokens"
+                )
+
         # Log sparsity statistics
         if stats["total_frames"] > 0:
             speaking_rate = (stats["speaking_triggered"] / stats["total_frames"]) * 100
             dst_rate = (stats["dst_triggered"] / stats["total_frames"]) * 100
-            logger.info(f"📊 Inference Statistics (Video with {stats['total_frames']} frames):")
-            logger.info(f"   Speaking triggered: {stats['speaking_triggered']} frames ({speaking_rate:.1f}%)")
-            logger.info(f"   DST update triggered: {stats['dst_triggered']} frames ({dst_rate:.1f}%)")
-            logger.info(f"   ✅ Sparse generation is {'ACTIVE' if (speaking_rate + dst_rate) < 20 else 'LIMITED'}")
-                
+            logger.info(
+                f"📊 Inference Statistics (Video with {stats['total_frames']} frames):"
+            )
+            logger.info(
+                f"   Speaking triggered: {stats['speaking_triggered']} frames ({speaking_rate:.1f}%)"
+            )
+            logger.info(
+                f"   DST update triggered: {stats['dst_triggered']} frames ({dst_rate:.1f}%)"
+            )
+            logger.info(
+                f"   ✅ Sparse generation is {'ACTIVE' if (speaking_rate + dst_rate) < 20 else 'LIMITED'}"
+            )
+
         return outputs
 
-    def _get_reference_text(self, conversation: List[Dict], frame_idx: int, role: str) -> Optional[str]:
+    def _get_reference_text(
+        self, conversation: List[Dict], frame_idx: int, role: str
+    ) -> Optional[str]:
         """
         Get reference text for a specific role at a specific frame.
         """
@@ -300,7 +362,7 @@ class DSTStreamRunner:
             parts = dst_text.split("->")
             step_id = parts[0].strip()
             transition = parts[1].strip()
-            
+
             if transition == "start":
                 current_state[step_id] = "in_progress"
             elif transition == "complete":
@@ -315,7 +377,9 @@ class DSTStreamRunner:
         current_len = kv_cache[0][0].shape[2]
         return current_len >= (self.max_seq_len - self.reserved_seq_len)
 
-    def _build_updated_schema_prompt(self, dst_schema: List[Dict], current_state: Dict) -> str:
+    def _build_updated_schema_prompt(
+        self, dst_schema: List[Dict], current_state: Dict
+    ) -> str:
         lines = ["You are a helpful assistant.\n"]
         lines.append("Steps:")
         for step in dst_schema:
@@ -323,11 +387,14 @@ class DSTStreamRunner:
             step_name = step["name"]
             state = current_state.get(step_id, "not_started")
             lines.append(f"- {step_id}: {step_name} ({state})")
-            
+
         # Sort steps alphanumerically for consistent state string
-        sorted_state = sorted(current_state.items(), key=lambda x: (int(x[0][1:]) if x[0][1:].isdigit() else x[0]))
+        sorted_state = sorted(
+            current_state.items(),
+            key=lambda x: (int(x[0][1:]) if x[0][1:].isdigit() else x[0]),
+        )
         state_parts = [f"Step {k}: {v}" for k, v in sorted_state]
         state_str = ", ".join(state_parts)
-        
+
         lines.append(f"\nDialogue State:\nCurrent step states - {state_str}")
         return "\n".join(lines)
