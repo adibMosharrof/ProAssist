@@ -79,13 +79,6 @@ class LoRAConfig:
             "down_proj",
         ]
     )
-    modules_to_save: list = field(
-        default_factory=lambda: [
-            "mm_projector",
-            "speaking_decision_head",
-            "dst_update_head",
-        ]
-    )
 
 
 @dataclass
@@ -288,7 +281,24 @@ class DSTProAssistTraining:
             self.logger.info("Applying LoRA to model...")
             # Convert ListConfig to list to avoid JSON serialization issues
             target_modules = list(lora_cfg.lora_target_modules)
-            modules_to_save = list(lora_cfg.modules_to_save)
+            
+            # Build modules_to_save list
+            modules_to_save = [
+                "mm_projector",
+                "speaking_decision_head",
+                "dst_update_head",
+            ]
+            
+            # Add generation heads based on model configuration
+            use_separate_heads = getattr(self.model.config, 'use_separate_generation_heads', False)
+            if use_separate_heads:
+                modules_to_save.extend(["speaking_generation_head", "dst_generation_head"])
+                self.logger.info("✓ Using separate generation heads")
+            else:
+                modules_to_save.append("lm_head")
+                self.logger.info("✓ Using single lm_head")
+            
+            self.logger.info(f"  modules_to_save: {modules_to_save}")
 
             lora_config = get_lora_config(
                 lora_r=lora_cfg.lora_r,
