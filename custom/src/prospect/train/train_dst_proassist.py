@@ -51,6 +51,10 @@ class ModelConfig:
     max_seq_len: int = 4096
     use_speaking_decision_head: bool = True
     use_dst_update_head: bool = True
+    # Generation head routing
+    # If True: create speaking_generation_head + dst_generation_head and route generation.
+    # If False: use the single shared lm_head.
+    use_separate_generation_heads: bool = False
     binary_decision_head_type: str = "linear"
     binary_loss_weight: float = 1.0
     # Quantization settings
@@ -175,6 +179,7 @@ class DSTProAssistTraining:
             max_seq_len=model_cfg.max_seq_len,
             use_speaking_decision_head=model_cfg.use_speaking_decision_head,
             use_dst_update_head=model_cfg.use_dst_update_head,
+            use_separate_generation_heads=model_cfg.use_separate_generation_heads,
             binary_decision_head_type=model_cfg.binary_decision_head_type,
             binary_loss_weight=model_cfg.binary_loss_weight,
         )
@@ -233,10 +238,6 @@ class DSTProAssistTraining:
             model_cfg.llm_pretrained, **load_kwargs
         )
 
-        # Initialize multimodal modules
-        self.model.init_multimodal_modules()
-        self.logger.info("✓ Initialized multimodal modules")
-
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(model_cfg.llm_pretrained)
 
@@ -261,6 +262,11 @@ class DSTProAssistTraining:
         self.model.config.img_token_id = config.img_token_id
         self.model.config.dst_gen_token_id = config.dst_gen_token_id
         self.model.config.asst_gen_token_id = config.asst_gen_token_id
+
+        # Initialize multimodal modules AFTER tokenizer resize so generation heads (if enabled)
+        # use the final vocab size.
+        self.model.init_multimodal_modules()
+        self.logger.info("✓ Initialized multimodal modules")
 
         # Set pad token
         if self.tokenizer.pad_token_id is None:
