@@ -356,6 +356,11 @@ class DSTProAssistTraining:
         # Use Hydra output directory + checkpoints subdirectory
         checkpoint_dir = self.output_dir / self.cfg.training.output_dir
 
+        # Get learning rate scheduler settings
+        lr_scheduler_type = self.cfg.training.get("lr_scheduler_type", "linear")
+        lr_scheduler_kwargs = self.cfg.training.get("lr_scheduler_kwargs", {})
+        weight_decay = self.cfg.training.get("weight_decay", 0.0)
+
         return TrainingArguments(
             output_dir=str(checkpoint_dir),
             num_train_epochs=self.cfg.training.num_epochs,
@@ -363,7 +368,10 @@ class DSTProAssistTraining:
             per_device_eval_batch_size=self.cfg.training.eval_batch_size,
             gradient_accumulation_steps=self.cfg.training.gradient_accumulation_steps,
             learning_rate=self.cfg.training.learning_rate,
+            weight_decay=weight_decay,
             warmup_steps=self.cfg.training.warmup_steps,
+            lr_scheduler_type=lr_scheduler_type,
+            lr_scheduler_kwargs=lr_scheduler_kwargs,
             logging_steps=self.cfg.training.logging_steps,
             save_steps=self.cfg.training.save_steps,
             eval_steps=self.cfg.training.eval_steps,
@@ -379,6 +387,11 @@ class DSTProAssistTraining:
             report_to=self.cfg.training.get("report_to", []),
             disable_tqdm=True,  # Disable progress bar for clean dictionary-style logging
             greater_is_better=False,  # eval_loss: lower is better
+            ddp_find_unused_parameters=False,  # Disable to reduce memory overhead
+            gradient_checkpointing=True,  # Enable to reduce memory usage
+            gradient_checkpointing_kwargs={
+                "use_reentrant": False
+            },  # Use modern checkpointing
         )
 
     def _create_trainer(self):
