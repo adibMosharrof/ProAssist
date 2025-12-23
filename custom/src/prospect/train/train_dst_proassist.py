@@ -49,14 +49,13 @@ class ModelConfig:
     llm_pretrained: str = "meta-llama/Llama-3.2-3B-Instruct"
     vision_hidden_size: int = 1152  # SigLIP output dimension
     max_seq_len: int = 4096
-    use_speaking_decision_head: bool = True
-    use_dst_update_head: bool = True
-    # Generation head routing
-    # If True: create speaking_generation_head + dst_generation_head and route generation.
-    # If False: use the single shared lm_head.
-    use_separate_generation_heads: bool = False
+    # Binary decision heads (always enabled)
     binary_decision_head_type: str = "linear"
     binary_loss_weight: float = 1.0
+    # Generation head architecture
+    # If True: use speaking_generation_head + dst_generation_head
+    # If False: use single lm_head
+    use_separate_generation_heads: bool = False
     # Quantization settings
     use_int4_quantization: bool = False
     bnb_4bit_compute_dtype: str = "bfloat16"
@@ -164,8 +163,6 @@ class DSTProAssistTraining:
             model_cfg.llm_pretrained,
             vision_hidden_size=model_cfg.vision_hidden_size,
             max_seq_len=model_cfg.max_seq_len,
-            use_speaking_decision_head=model_cfg.use_speaking_decision_head,
-            use_dst_update_head=model_cfg.use_dst_update_head,
             use_separate_generation_heads=model_cfg.use_separate_generation_heads,
             binary_decision_head_type=model_cfg.binary_decision_head_type,
             binary_loss_weight=model_cfg.binary_loss_weight,

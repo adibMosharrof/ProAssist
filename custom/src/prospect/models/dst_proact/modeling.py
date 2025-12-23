@@ -35,10 +35,17 @@ class DSTProActModelMixin(AutoModelForCausalLM):
             nn.Linear(lm_input_size, lm_input_size, bias=True),
         )
         self.mm_projector.to(self.device, self.dtype)
+<<<<<<< HEAD
 
         # Speaking decision head
         self.speaking_decision_head = None
         if self.config.use_speaking_decision_head:
+=======
+        
+        # Binary decision heads and separate generation heads (controlled by use_separate_generation_heads)
+        if self.config.use_separate_generation_heads:
+            # Speaking decision head
+>>>>>>> 1b884d44130d507cba92db0474451da5ab992235
             if "linear" in self.config.binary_decision_head_type:
                 self.speaking_decision_head = nn.Linear(lm_input_size, 1)
             else:
@@ -48,10 +55,15 @@ class DSTProActModelMixin(AutoModelForCausalLM):
                     nn.Linear(lm_input_size // 2, 1),
                 )
             self.speaking_decision_head.to(self.device, self.dtype)
+<<<<<<< HEAD
 
         # DST update decision head
         self.dst_update_head = None
         if self.config.use_dst_update_head:
+=======
+            
+            # DST update decision head
+>>>>>>> 1b884d44130d507cba92db0474451da5ab992235
             if "linear" in self.config.binary_decision_head_type:
                 self.dst_update_head = nn.Linear(lm_input_size, 1)
             else:
@@ -61,7 +73,15 @@ class DSTProActModelMixin(AutoModelForCausalLM):
                     nn.Linear(lm_input_size // 2, 1),
                 )
             self.dst_update_head.to(self.device, self.dtype)
+<<<<<<< HEAD
 
+=======
+        else:
+            # Single head mode - no binary decision heads
+            self.speaking_decision_head = None
+            self.dst_update_head = None
+        
+>>>>>>> 1b884d44130d507cba92db0474451da5ab992235
         # Separate generation heads for speaking and DST (optional - controlled by config)
         if self.config.use_separate_generation_heads:
             vocab_size = self.config.vocab_size
@@ -315,12 +335,18 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
         **kwargs,
     ) -> CausalLMOutputWithPast:
         """Forward pass with multimodal fusion and binary heads."""
+<<<<<<< HEAD
         output_hidden_states = (
             self.config.use_speaking_decision_head
             or self.config.use_dst_update_head
             or output_hidden_states
         )
 
+=======
+        # Always need hidden states for binary heads
+        output_hidden_states = True
+        
+>>>>>>> 1b884d44130d507cba92db0474451da5ab992235
         if inputs_embeds is None:
             inputs_embeds = self.joint_embed(input_ids, image_embeds)
 
