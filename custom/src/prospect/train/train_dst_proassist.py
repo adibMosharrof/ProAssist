@@ -190,6 +190,7 @@ class DSTProAssistTraining:
                 bnb_4bit_compute_dtype=compute_dtype,
                 bnb_4bit_quant_type=model_cfg.bnb_4bit_quant_type,
                 bnb_4bit_use_double_quant=model_cfg.bnb_4bit_use_double_quant,
+                llm_int8_enable_fp32_cpu_offload=True,  # Allow CPU offload for non-quantized modules
             )
             self.logger.info(f"  ├─ Compute dtype: {model_cfg.bnb_4bit_compute_dtype}")
             self.logger.info(f"  ├─ Quant type: {model_cfg.bnb_4bit_quant_type}")
@@ -202,23 +203,21 @@ class DSTProAssistTraining:
             "config": config,
         }
 
+        # Get accelerator for device management
+        from accelerate import Accelerator
+
+        accelerator = Accelerator()
+
         if quantization_config is not None:
             load_kwargs["quantization_config"] = quantization_config
             load_kwargs["torch_dtype"] = (
                 torch.bfloat16
             )  # Force BF16 for non-quantized layers
-
-            # For distributed training with quantization, we must map to specific device
-            from accelerate import Accelerator
-
-            accelerator = Accelerator()
-            if accelerator.num_processes > 1:
-                # Map entire model to the current process's device
-                load_kwargs["device_map"] = {"": accelerator.local_process_index}
-            else:
-                load_kwargs["device_map"] = "auto"
+            # Map entire model to the current process's device
+            load_kwargs["device_map"] = {"": accelerator.device}
         else:
             load_kwargs["torch_dtype"] = torch.bfloat16
+            load_kwargs["device_map"] = {"": accelerator.device}
 
         self.model = DSTProActLlamaForCausalLM.from_pretrained(
             model_cfg.llm_pretrained, **load_kwargs

@@ -189,6 +189,7 @@ class DSTProActModelMixin(AutoModelForCausalLM):
         first_outputs = None
 
         # Select which generation head to use
+        # Speaking uses lm_head (natural language), DST uses dst_generation_head if available
         if use_dst_head:
             if self.dst_generation_head is not None:
                 generation_head = self.dst_generation_head
