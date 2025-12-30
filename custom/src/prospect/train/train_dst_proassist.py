@@ -52,9 +52,10 @@ class ModelConfig:
     # Binary decision heads (always enabled)
     binary_decision_head_type: str = "linear"
     binary_loss_weight: float = 1.0
+    binary_threshold: float = 0.5  # Threshold for binary classification
     # Generation head architecture
-    # If True: use speaking_generation_head + dst_generation_head
-    # If False: use single lm_head
+    # If True: use lm_head for speaking + dst_generation_head for DST
+    # If False: use single lm_head for both
     use_separate_generation_heads: bool = False
     # Quantization settings
     use_int4_quantization: bool = False
@@ -166,6 +167,7 @@ class DSTProAssistTraining:
             use_separate_generation_heads=model_cfg.use_separate_generation_heads,
             binary_decision_head_type=model_cfg.binary_decision_head_type,
             binary_loss_weight=model_cfg.binary_loss_weight,
+            binary_threshold=model_cfg.binary_threshold,
         )
 
         # Setup quantization config if enabled
@@ -271,23 +273,29 @@ class DSTProAssistTraining:
             self.logger.info("Applying LoRA to model...")
             # Convert ListConfig to list to avoid JSON serialization issues
             target_modules = list(lora_cfg.lora_target_modules)
-            
+
             # Build modules_to_save list
             modules_to_save = [
                 "mm_projector",
                 "speaking_decision_head",
                 "dst_update_head",
             ]
-            
-            # Add generation heads based on model configuration
-            use_separate_heads = getattr(self.model.config, 'use_separate_generation_heads', False)
+
+            # lm_head is always saved (used for speaking in both modes)
+            modules_to_save.append("lm_head")
+
+            # Add dst_generation_head only when separate heads are enabled
+            use_separate_heads = getattr(
+                self.model.config, "use_separate_generation_heads", False
+            )
             if use_separate_heads:
-                modules_to_save.extend(["speaking_generation_head", "dst_generation_head"])
-                self.logger.info("✓ Using separate generation heads")
+                modules_to_save.append("dst_generation_head")
+                self.logger.info(
+                    "✓ Using lm_head for speaking, dst_generation_head for DST"
+                )
             else:
-                modules_to_save.append("lm_head")
-                self.logger.info("✓ Using single lm_head")
-            
+                self.logger.info("✓ Using single lm_head for both speaking and DST")
+
             self.logger.info(f"  modules_to_save: {modules_to_save}")
 
             lora_config = get_lora_config(
@@ -381,10 +389,7 @@ class DSTProAssistTraining:
             per_device_eval_batch_size=self.cfg.training.eval_batch_size,
             gradient_accumulation_steps=self.cfg.training.gradient_accumulation_steps,
             learning_rate=self.cfg.training.learning_rate,
-            weight_decay=weight_decay,
             warmup_steps=self.cfg.training.warmup_steps,
-            lr_scheduler_type=lr_scheduler_type,
-            lr_scheduler_kwargs=lr_scheduler_kwargs,
             logging_steps=self.cfg.training.logging_steps,
             save_steps=self.cfg.training.save_steps,
             eval_steps=self.cfg.training.eval_steps,
@@ -400,11 +405,9 @@ class DSTProAssistTraining:
             report_to=self.cfg.training.get("report_to", []),
             disable_tqdm=True,  # Disable progress bar for clean dictionary-style logging
             greater_is_better=False,  # eval_loss: lower is better
-            ddp_find_unused_parameters=False,  # Disable to reduce memory overhead
-            gradient_checkpointing=True,  # Enable to reduce memory usage
-            gradient_checkpointing_kwargs={
-                "use_reentrant": False
-            },  # Use modern checkpointing
+            weight_decay=weight_decay,
+            lr_scheduler_type=lr_scheduler_type,
+            lr_scheduler_kwargs=lr_scheduler_kwargs,
         )
 
     def _create_trainer(self):

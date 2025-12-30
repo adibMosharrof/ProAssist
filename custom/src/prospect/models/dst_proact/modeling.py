@@ -11,7 +11,6 @@ import torch
 import torch.nn as nn
 from transformers import LlamaForCausalLM, AutoModelForCausalLM
 from transformers.modeling_outputs import CausalLMOutputWithPast
-from sklearn.metrics import balanced_accuracy_score, precision_recall_fscore_support
 
 from prospect.models.dst_proact.configuration import DSTProActLlamaConfig
 
@@ -35,7 +34,7 @@ class DSTProActModelMixin(AutoModelForCausalLM):
             nn.Linear(lm_input_size, lm_input_size, bias=True),
         )
         self.mm_projector.to(self.device, self.dtype)
-        
+
         # Binary decision heads and separate generation heads (controlled by use_separate_generation_heads)
         if self.config.use_separate_generation_heads:
             # Speaking decision head
@@ -48,7 +47,7 @@ class DSTProActModelMixin(AutoModelForCausalLM):
                     nn.Linear(lm_input_size // 2, 1),
                 )
             self.speaking_decision_head.to(self.device, self.dtype)
-            
+
             # DST update decision head
             if "linear" in self.config.binary_decision_head_type:
                 self.dst_update_head = nn.Linear(lm_input_size, 1)
@@ -63,39 +62,26 @@ class DSTProActModelMixin(AutoModelForCausalLM):
             # Single head mode - no binary decision heads
             self.speaking_decision_head = None
             self.dst_update_head = None
-        
-        # Separate generation heads for speaking and DST (optional - controlled by config)
+
+        # Separate DST generation head (optional - controlled by config)
+        # Speaking always uses lm_head
         if self.config.use_separate_generation_heads:
             vocab_size = self.config.vocab_size
-
-            self.speaking_generation_head = nn.Linear(
-                lm_input_size, vocab_size, bias=False
-            )
             self.dst_generation_head = nn.Linear(lm_input_size, vocab_size, bias=False)
 
-            # Copy weights from original lm_head if it exists
+            # Initialize DST head from lm_head if it exists
             if hasattr(self, "lm_head") and self.lm_head is not None:
-                logger.info("Initializing separate generation heads from lm_head")
-                self.speaking_generation_head.weight.data = (
-                    self.lm_head.weight.data.clone()
-                )
+                logger.info("Initializing dst_generation_head from lm_head")
                 self.dst_generation_head.weight.data = self.lm_head.weight.data.clone()
             else:
-                logger.info(
-                    "Initializing separate generation heads with random weights"
-                )
+                logger.info("Initializing dst_generation_head with random weights")
 
-            self.speaking_generation_head.to(self.device, self.dtype)
             self.dst_generation_head.to(self.device, self.dtype)
-
-            logger.info(
-                f"✓ Initialized separate generation heads: speaking_generation_head, dst_generation_head"
-            )
+            logger.info(f"✓ Initialized dst_generation_head (speaking uses lm_head)")
         else:
-            # Single head mode - use existing lm_head
-            self.speaking_generation_head = None
+            # Single head mode - use lm_head for both tasks
             self.dst_generation_head = None
-            logger.info(f"✓ Using single lm_head for generation")
+            logger.info(f"✓ Using single lm_head for both speaking and DST")
 
         logger.info(
             f"✓ Initialized multimodal modules ({mm_feature_size} -> {lm_input_size})"
@@ -183,7 +169,7 @@ class DSTProActModelMixin(AutoModelForCausalLM):
         """Fast greedy generation with KV cache (ProAssist pattern).
 
         Args:
-            use_dst_head: If True, use dst_generation_head; otherwise use speaking_generation_head
+            use_dst_head: If True, use dst_generation_head; otherwise use lm_head
 
         Returns:
             - generated token ids
@@ -209,10 +195,8 @@ class DSTProActModelMixin(AutoModelForCausalLM):
             else:
                 generation_head = self.lm_head
         else:
-            if self.speaking_generation_head is not None:
-                generation_head = self.speaking_generation_head
-            else:
-                generation_head = self.lm_head
+            # Always use lm_head for speaking
+            generation_head = self.lm_head
 
         for i in range(max_length):
             # Get hidden states from base model
@@ -278,7 +262,6 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
         "mm_projector",
         "speaking_decision_head",
         "dst_update_head",
-        "speaking_generation_head",
         "dst_generation_head",
     ]
 
@@ -287,7 +270,6 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
         self.mm_projector = None
         self.speaking_decision_head = None
         self.dst_update_head = None
-        self.speaking_generation_head = None
         self.dst_generation_head = None
         logger.info("✓ DSTProActLlamaForCausalLM initialized")
 
@@ -319,7 +301,7 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
         """Forward pass with multimodal fusion and binary heads."""
         # Always need hidden states for binary heads
         output_hidden_states = True
-        
+
         if inputs_embeds is None:
             inputs_embeds = self.joint_embed(input_ids, image_embeds)
 
@@ -377,15 +359,14 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
             outputs.dst_update_logits = self.dst_update_head(hidden_states).squeeze(-1)
 
         # Generation head routing: use separate heads for speaking vs DST
-        # During training, we know which tokens belong to which task from labels
-        # During inference, we'll select based on binary head predictions
+        # During training/eval with labels, we know which tokens belong to which task
+        # During pure inference, we'll select based on binary head predictions
 
-        if self.training and (
-            speaking_gen_labels is not None or dst_gen_labels is not None
-        ):
-            # Training: compute logits from both heads (if separate heads enabled) or single head
+        if speaking_gen_labels is not None or dst_gen_labels is not None:
+            # Training/Eval with labels: compute logits from both heads for loss computation
             if self.config.use_separate_generation_heads:
-                speaking_logits = self.speaking_generation_head(hidden_states)
+                # Use lm_head for speaking, dst_generation_head for DST
+                speaking_logits = self.lm_head(hidden_states)
                 dst_logits = self.dst_generation_head(hidden_states)
                 # Store both for loss computation
                 outputs.speaking_generation_logits = speaking_logits
@@ -401,11 +382,11 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
         else:
             # Inference: need to determine which head to use
             # If we have binary predictions, use them; otherwise default to speaking
-            # For now, use speaking head by default (will be refined in fast_greedy_generate)
-            if self.speaking_generation_head:
-                outputs.logits = self.speaking_generation_head(hidden_states)
+            if self.config.use_separate_generation_heads:
+                # Use lm_head for speaking
+                outputs.logits = self.lm_head(hidden_states)
             else:
-                # Fallback to original lm_head if separate heads not initialized
+                # Single head mode: use lm_head
                 outputs.logits = self.lm_head(hidden_states)
 
         # Compute losses
@@ -422,15 +403,16 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
             and outputs.speaking_generation_logits is not None
         ):
             # Shift logits and labels for causal LM
-            shift_logits = outputs.speaking_generation_logits[..., :-1, :].contiguous()
-            shift_labels = speaking_gen_labels[..., 1:].contiguous()
-
-            # Compute LM loss for assistant responses using speaking generation head
+            # Use views (no copy) - contiguous only when needed by loss function
+            shift_labels = speaking_gen_labels[..., 1:]
             mask = shift_labels != -100
+
             if mask.any():
+                # Only flatten/reshape what's needed for loss computation
+                shift_logits = outputs.speaking_generation_logits[..., :-1, :]
                 speaking_gen_loss = ce_loss(
-                    outputs.logits[..., :-1, :][mask],
-                    speaking_gen_labels[..., 1:][mask],
+                    shift_logits.reshape(-1, shift_logits.size(-1))[mask.reshape(-1)],
+                    shift_labels.reshape(-1)[mask.reshape(-1)],
                 )
                 loss = speaking_gen_loss
                 log_dict["speaking_gen_loss"] = speaking_gen_loss.item()
@@ -441,24 +423,29 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
             and outputs.dst_generation_logits is not None
         ):
             # Shift logits and labels for causal LM
-            shift_logits = outputs.dst_generation_logits[..., :-1, :].contiguous()
-            shift_labels = dst_gen_labels[..., 1:].contiguous()
-
-            # Compute LM loss for DST updates using DST generation head
+            # Use views (no copy) - contiguous only when needed by loss function
+            shift_labels = dst_gen_labels[..., 1:]
             mask = shift_labels != -100
+
             if mask.any():
+                # Only flatten/reshape what's needed for loss computation
+                shift_logits = outputs.dst_generation_logits[..., :-1, :]
                 dst_gen_loss = ce_loss(
-                    outputs.logits[..., :-1, :][mask], dst_gen_labels[..., 1:][mask]
+                    shift_logits.reshape(-1, shift_logits.size(-1))[mask.reshape(-1)],
+                    shift_labels.reshape(-1)[mask.reshape(-1)],
                 )
                 loss = (loss + dst_gen_loss) if loss is not None else dst_gen_loss
                 log_dict["dst_gen_loss"] = dst_gen_loss.item()
 
         # Fallback to standard labels if separate labels not provided
         if loss is None and labels is not None:
-            # Shift for causal LM
-            shift_logits = outputs.logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            lm_loss = ce_loss(shift_logits.flatten(0, 1), shift_labels.flatten())
+            # Shift for causal LM - use views, reshape instead of flatten
+            shift_logits = outputs.logits[..., :-1, :]
+            shift_labels = labels[..., 1:]
+            lm_loss = ce_loss(
+                shift_logits.reshape(-1, shift_logits.size(-1)),
+                shift_labels.reshape(-1),
+            )
             loss = lm_loss
             log_dict["lm_loss"] = lm_loss.item()
 
@@ -498,29 +485,17 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
                 else (speaking_loss * self.config.binary_loss_weight)
             )
 
-            # Compute metrics for speaking decision using sklearn
+            # Store predictions and targets for metric computation in trainer
             mask = speaking_labels != self.config.ignore_id
             if mask.any():
                 preds = (
-                    (torch.sigmoid(outputs.speaking_logits[mask]) > 0.5)
-                    .long()
-                    .cpu()
-                    .numpy()
-                )
-                targets = speaking_labels[mask].long().cpu().numpy()
-
-                # Balanced accuracy
-                log_dict["speaking_balanced_accuracy"] = float(
-                    balanced_accuracy_score(targets, preds)
-                )
-
-                # Precision, Recall, F1 (zero_division=0 handles edge cases)
-                precision, recall, f1, _ = precision_recall_fscore_support(
-                    targets, preds, average="binary", zero_division=0
-                )
-                log_dict["speaking_precision"] = float(precision)
-                log_dict["speaking_recall"] = float(recall)
-                log_dict["speaking_f1"] = float(f1)
+                    torch.sigmoid(outputs.speaking_logits[mask])
+                    > self.config.binary_threshold
+                ).long()
+                targets = speaking_labels[mask].long()
+                # Store for trainer to compute metrics
+                log_dict["speaking_preds"] = preds
+                log_dict["speaking_targets"] = targets
 
         if dst_update_labels is not None and self.dst_update_head:
             # Follow ProAssist's approach: separate loss for positive and negative frames
@@ -558,29 +533,17 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
                 else (dst_loss * self.config.binary_loss_weight)
             )
 
-            # Compute metrics for DST update decision using sklearn
+            # Store predictions and targets for metric computation in trainer
             mask = dst_update_labels != self.config.ignore_id
             if mask.any():
                 preds = (
-                    (torch.sigmoid(outputs.dst_update_logits[mask]) > 0.5)
-                    .long()
-                    .cpu()
-                    .numpy()
-                )
-                targets = dst_update_labels[mask].long().cpu().numpy()
-
-                # Balanced accuracy
-                log_dict["dst_balanced_accuracy"] = float(
-                    balanced_accuracy_score(targets, preds)
-                )
-
-                # Precision, Recall, F1 (zero_division=0 handles edge cases)
-                precision, recall, f1, _ = precision_recall_fscore_support(
-                    targets, preds, average="binary", zero_division=0
-                )
-                log_dict["dst_precision"] = float(precision)
-                log_dict["dst_recall"] = float(recall)
-                log_dict["dst_f1"] = float(f1)
+                    torch.sigmoid(outputs.dst_update_logits[mask])
+                    > self.config.binary_threshold
+                ).long()
+                targets = dst_update_labels[mask].long()
+                # Store for trainer to compute metrics
+                log_dict["dst_preds"] = preds
+                log_dict["dst_targets"] = targets
 
         # Convert output to dict and add metrics directly (following DST SmolVLM pattern)
         output_dict = {
