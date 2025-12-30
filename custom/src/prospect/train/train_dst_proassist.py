@@ -274,19 +274,18 @@ class DSTProAssistTraining:
             target_modules = list(lora_cfg.lora_target_modules)
 
             # Build modules_to_save list
+            use_separate_heads = getattr(
+                self.model.config, "use_separate_generation_heads", False
+            )
+            
             modules_to_save = [
                 "mm_projector",
                 "speaking_decision_head",
                 "dst_update_head",
+                "lm_head",
+                "embed_tokens",
             ]
-
-            # lm_head is always saved (used for speaking in both modes)
-            modules_to_save.append("lm_head")
-
-            # Add dst_generation_head only when separate heads are enabled
-            use_separate_heads = getattr(
-                self.model.config, "use_separate_generation_heads", False
-            )
+            
             if use_separate_heads:
                 modules_to_save.append("dst_generation_head")
                 self.logger.info(
@@ -310,11 +309,11 @@ class DSTProAssistTraining:
             self.logger.info("✓ LoRA applied successfully")
             print_trainable_parameters(self.model)
         else:
-            # Freeze base model, train only multimodal modules
+            # Full fine-tuning without LoRA: train entire model
             self.logger.info(
-                "🔒 Freezing base LLM, training only multimodal modules..."
+                "🔓 Full fine-tuning enabled: training all parameters..."
             )
-            self.model.requires_grad_(False)
+            self.model.requires_grad_(True)
 
             # Enable gradients for custom modules
             if (
@@ -485,14 +484,12 @@ class DSTProAssistTraining:
         accelerator.wait_for_everyone()
 
 
-# Calculate absolute config path
-_script_dir = Path(__file__).parent
-_config_dir = _script_dir.parent.parent.parent / "config" / "training"
-
+# Calculate absolute config path from current working directory
+_config_dir = str(Path.cwd() / "custom" / "config" / "training")
 
 @hydra.main(
     version_base=None,
-    config_path=str(_config_dir),
+    config_path=_config_dir,
     config_name="dst_proassist_training",
 )
 def main(cfg: DictConfig):

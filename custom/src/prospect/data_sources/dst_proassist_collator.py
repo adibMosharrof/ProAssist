@@ -149,8 +149,13 @@ class DSTProAssistCollator:
         speaking_labels = pad_sequence(all_speaking_labels, batch_first=True, padding_value=-100)
         dst_labels = pad_sequence(all_dst_labels, batch_first=True, padding_value=-100)
         
+        # Create attention mask: 1 for real tokens (non-padding), 0 for padding
+        # Use input_ids to determine which are real tokens (not pad_token_id)
+        attention_mask = (input_ids != self.tokenizer.pad_token_id).long()
+        
         return {
             "input_ids": input_ids,
+            "attention_mask": attention_mask,
             "labels": speaking_gen_labels,  # Required for Trainer to detect labels and extract loss
             "speaking_gen_labels": speaking_gen_labels,
             "dst_gen_labels": dst_gen_labels,
@@ -346,10 +351,10 @@ class DSTProAssistCollator:
                 dst_tokens = [self.dst_token_id] + text_tokens + [self.eos_token_id]
                 
                 input_ids.extend(dst_tokens)
-                # Only compute loss on the text tokens, not on [DST] prefix
-                # BUT include EOS in loss so model learns to stop generating
+                # Labels aligned with input_ids (forward pass does the shift for autoregressive)
+                # Position [DST] (idx 0) will predict text_tokens[0] after shift
                 speaking_gen_labels.extend([-100] * len(dst_tokens))
-                dst_gen_labels.extend([-100] + text_tokens + [self.eos_token_id])  # Include EOS to teach stopping
+                dst_gen_labels.extend([-100] + text_tokens + [self.eos_token_id])
                 speaking_labels.extend([-100] * len(dst_tokens))
                 dst_labels.extend([-100] * len(dst_tokens))
             
@@ -359,15 +364,15 @@ class DSTProAssistCollator:
                 resp_tokens = [self.asst_token_id] + text_tokens + [self.eos_token_id]
                 
                 input_ids.extend(resp_tokens)
-                # Only compute loss on the text tokens, not on [ASST] prefix
-                # BUT include EOS in loss so model learns to stop generating
-                speaking_gen_labels.extend([-100] + text_tokens + [self.eos_token_id])  # Include EOS to teach stopping
+                # Labels aligned with input_ids (forward pass does the shift for autoregressive)
+                # Position [ASST] (idx 0) will predict text_tokens[0] after shift
+                speaking_gen_labels.extend([-100] + text_tokens + [self.eos_token_id])
                 dst_gen_labels.extend([-100] * len(resp_tokens))
                 speaking_labels.extend([-100] * len(resp_tokens))
                 dst_labels.extend([-100] * len(resp_tokens))
         
         used_frames = max(0, end_frame - start_frame)
-        # text = self.tokenizer.decode(input_ids)
+        text = self.tokenizer.decode(input_ids)
         return input_ids, speaking_gen_labels, dst_gen_labels, speaking_labels, dst_labels, used_frames
     
     def _load_embeddings(self, sample: Dict[str, Any]) -> torch.Tensor:

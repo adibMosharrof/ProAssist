@@ -35,33 +35,28 @@ class DSTProActModelMixin(AutoModelForCausalLM):
         )
         self.mm_projector.to(self.device, self.dtype)
 
-        # Binary decision heads and separate generation heads (controlled by use_separate_generation_heads)
-        if self.config.use_separate_generation_heads:
-            # Speaking decision head
-            if "linear" in self.config.binary_decision_head_type:
-                self.speaking_decision_head = nn.Linear(lm_input_size, 1)
-            else:
-                self.speaking_decision_head = nn.Sequential(
-                    nn.Linear(lm_input_size, lm_input_size // 2),
-                    nn.GELU(),
-                    nn.Linear(lm_input_size // 2, 1),
-                )
-            self.speaking_decision_head.to(self.device, self.dtype)
-
-            # DST update decision head
-            if "linear" in self.config.binary_decision_head_type:
-                self.dst_update_head = nn.Linear(lm_input_size, 1)
-            else:
-                self.dst_update_head = nn.Sequential(
-                    nn.Linear(lm_input_size, lm_input_size // 2),
-                    nn.GELU(),
-                    nn.Linear(lm_input_size // 2, 1),
-                )
-            self.dst_update_head.to(self.device, self.dtype)
+        # Binary decision heads (always created for speaking/DST decisions)
+        # Speaking decision head
+        if "linear" in self.config.binary_decision_head_type:
+            self.speaking_decision_head = nn.Linear(lm_input_size, 1)
         else:
-            # Single head mode - no binary decision heads
-            self.speaking_decision_head = None
-            self.dst_update_head = None
+            self.speaking_decision_head = nn.Sequential(
+                nn.Linear(lm_input_size, lm_input_size // 2),
+                nn.GELU(),
+                nn.Linear(lm_input_size // 2, 1),
+            )
+        self.speaking_decision_head.to(self.device, self.dtype)
+
+        # DST update decision head
+        if "linear" in self.config.binary_decision_head_type:
+            self.dst_update_head = nn.Linear(lm_input_size, 1)
+        else:
+            self.dst_update_head = nn.Sequential(
+                nn.Linear(lm_input_size, lm_input_size // 2),
+                nn.GELU(),
+                nn.Linear(lm_input_size // 2, 1),
+            )
+        self.dst_update_head.to(self.device, self.dtype)
 
         # Separate DST generation head (optional - controlled by config)
         # Speaking always uses lm_head
@@ -322,6 +317,10 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
                 speaking_labels = speaking_labels[:, :max_len]
             if dst_update_labels is not None:
                 dst_update_labels = dst_update_labels[:, :max_len]
+            if speaking_gen_labels is not None:
+                speaking_gen_labels = speaking_gen_labels[:, :max_len]
+            if dst_gen_labels is not None:
+                dst_gen_labels = dst_gen_labels[:, :max_len]
 
         # Call base model without lm_head (get hidden states only)
         base_outputs = self.model(
@@ -407,6 +406,12 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
             # Use views (no copy) - contiguous only when needed by loss function
             shift_labels = speaking_gen_labels[..., 1:]
             mask = shift_labels != -100
+            
+            # Combine with attention mask to exclude padding tokens
+            if attention_mask is not None:
+                # attention_mask is [batch, seq_len], shift it to match shifted labels
+                shift_attention_mask = attention_mask[:, 1:].bool()
+                mask = mask & shift_attention_mask
 
             if mask.any():
                 # Only flatten/reshape what's needed for loss computation
@@ -427,6 +432,12 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
             # Use views (no copy) - contiguous only when needed by loss function
             shift_labels = dst_gen_labels[..., 1:]
             mask = shift_labels != -100
+            
+            # Combine with attention mask to exclude padding tokens
+            if attention_mask is not None:
+                # attention_mask is [batch, seq_len], shift it to match shifted labels
+                shift_attention_mask = attention_mask[:, 1:].bool()
+                mask = mask & shift_attention_mask
 
             if mask.any():
                 # Only flatten/reshape what's needed for loss computation
