@@ -304,6 +304,9 @@ class DSTProAssistTraining:
                 modules_to_save=modules_to_save,
             )
             self.model = apply_lora_to_model(self.model, lora_config)
+            
+            # Inject tokenizer for deep debugging in forward pass
+            self.model.debug_tokenizer = self.tokenizer
 
             # Verify trainable parameters
             self.logger.info("✓ LoRA applied successfully")
@@ -336,6 +339,9 @@ class DSTProAssistTraining:
             ):
                 self.model.dst_update_head.requires_grad_(True)
                 self.logger.info("  └─ dst_update_head: trainable")
+
+            # Inject tokenizer for deep debugging in forward pass
+            self.model.debug_tokenizer = self.tokenizer
 
             print_trainable_parameters(self.model)
 

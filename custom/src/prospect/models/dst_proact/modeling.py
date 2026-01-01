@@ -6,7 +6,7 @@ Model classes for ProAssist-style DST architecture.
 
 import logging
 from typing import Optional, Tuple
-
+import random
 import torch
 import torch.nn as nn
 from transformers import LlamaForCausalLM, AutoModelForCausalLM
@@ -100,8 +100,10 @@ class DSTProActModelMixin(AutoModelForCausalLM):
                 - Tensor of shape [batch_size, num_frames, hidden_size]
                 - List of tensors, each [num_frames_i, hidden_size]
         """
-        clamped_input_ids = input_ids.clamp(max=self.config.vocab_size - 1)
-        inputs_embeds = self.get_input_embeddings()(clamped_input_ids).clone()
+        # Do not clamp input_ids to config.vocab_size. 
+        # When we add special tokens ([DST], [ASST]), their IDs > config.vocab_size.
+        # The embedding layer is already resized to handle them.
+        inputs_embeds = self.get_input_embeddings()(input_ids)
 
         # Convert to model dtype (bfloat16) for mixed precision training
         # Embedding lookup is done in float32, but all subsequent ops use bfloat16
@@ -442,12 +444,94 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
             if mask.any():
                 # Only flatten/reshape what's needed for loss computation
                 shift_logits = outputs.dst_generation_logits[..., :-1, :]
+                
+                # Compute loss (standard, memory efficient for backward)
                 dst_gen_loss = ce_loss(
                     shift_logits.reshape(-1, shift_logits.size(-1))[mask.reshape(-1)],
                     shift_labels.reshape(-1)[mask.reshape(-1)],
                 )
                 loss = (loss + dst_gen_loss) if loss is not None else dst_gen_loss
                 log_dict["dst_gen_loss"] = dst_gen_loss.item()
+                
+                # --- DEBUG LOGGING (Optimized for VRAM) ---
+                # Log very rarely (0.1%) to check generation quality
+                if self.training and random.random() < 0.001:
+                    with torch.no_grad():
+                        # Optimize: argmax FIRST (reduce dim), then mask. 
+                        # shift_logits: [B, T, V] -> [B, T]
+                        all_preds = shift_logits.argmax(dim=-1)
+                        
+                        # Apply mask to the small tensor (for accuracy calc)
+                        flat_mask = mask.view(-1)
+                        flat_preds = all_preds.view(-1)[flat_mask]
+                        flat_labels = shift_labels.reshape(-1)[flat_mask]
+                        
+                        acc = (flat_preds == flat_labels).float().mean()
+                        
+                        # Log basic stats
+                        logger.info(f"\n[DST MONITOR] Loss: {dst_gen_loss.item():.4f} | Acc: {acc:.2%}")
+
+                        # Check tokens if tokenizer is available
+                        if hasattr(self, "debug_tokenizer") and self.debug_tokenizer:
+                            try:
+                                dst_id = self.debug_tokenizer.convert_tokens_to_ids("[DST]")
+                                eos_id = self.debug_tokenizer.eos_token_id
+                                
+                                # Find a batch item that has [DST]
+                                # input_ids is [B, T]
+                                has_dst = (input_ids == dst_id)
+                                rows, cols = torch.where(has_dst)
+                                
+                                if len(rows) > 0:
+                                    # Pick the first occurrence
+                                    b_idx = rows[0]
+                                    start_idx = cols[0] # Position of [DST]
+                                    
+                                    # Look for EOS after [DST] in the LABELS
+                                    # dst_gen_labels at [DST] pos is -100. Text starts at start_idx + 1.
+                                    # Slice from start_idx to end
+                                    sample_labels = dst_gen_labels[b_idx, start_idx:]
+                                    
+                                    # Find first EOS
+                                    eos_matches = (sample_labels == eos_id).nonzero()
+                                    
+                                    if len(eos_matches) > 0:
+                                        rel_eos_idx = eos_matches[0].item()
+                                        
+                                        # Extract TARGET (Labels)
+                                        # from 1 to rel_eos_idx+1 (inclusive of EOS)
+                                        # index 0 is -100 (DST token)
+                                        target_ids = sample_labels[1 : rel_eos_idx + 1]
+                                        
+                                        # Extract PREDICTION (Logits)
+                                        # all_preds is [B, T-1]. Match alignment.
+                                        # input [DST] at 'start_idx' predicts 'start_idx' in 'shift_logits' (which maps to labels 'start_idx+1')
+                                        # So preds for the sequence start at 'start_idx'.
+                                        # Length is same as target_ids.
+                                        pred_end_idx = start_idx + len(target_ids)
+                                        if pred_end_idx <= all_preds.size(1):
+                                            sample_preds = all_preds[b_idx, start_idx : pred_end_idx]
+                                            
+                                            decoded_target = self.debug_tokenizer.decode(target_ids)
+                                            decoded_pred = self.debug_tokenizer.decode(sample_preds)
+                                            
+                                            logger.info(f"  Target: {decoded_target!r}")
+                                            logger.info(f"  Model : {decoded_pred!r}")
+                                            
+                                            if decoded_target == decoded_pred:
+                                                logger.info("  ✓ Perfect Match")
+                                            else:
+                                                logger.info("  ✗ Mismatch")
+                                        else:
+                                            logger.warning("  Prediction index out of bounds (truncated sample?)")
+                                    else:
+                                        logger.info("  (Monitor) Found [DST] but no EOS in labels - split sequence?")
+                                else:
+                                    logger.info("  (Monitor) No [DST] in this batch.")
+
+                            except Exception as e:
+                                logger.warning(f"Monitor decoding failed: {e}")
+                # ---------------------
 
         # Fallback to standard labels if separate labels not provided
         if loss is None and labels is not None:
