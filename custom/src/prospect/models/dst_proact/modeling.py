@@ -454,8 +454,9 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
                 log_dict["dst_gen_loss"] = dst_gen_loss.item()
                 
                 # --- DEBUG LOGGING (Optimized for VRAM) ---
-                # Log very rarely (0.1%) to check generation quality
-                if self.training and random.random() < 0.001:
+                # Log very rarely (controlled by config) to check generation quality
+                monitor_freq = getattr(self.config, 'monitor_log_freq', 0.001)  # Default to 0.001 if not set
+                if self.training and random.random() < monitor_freq:
                     with torch.no_grad():
                         # Optimize: argmax FIRST (reduce dim), then mask. 
                         # shift_logits: [B, T, V] -> [B, T]
@@ -537,6 +538,62 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
                             except Exception as e:
                                 logger.warning(f"Monitor decoding failed: {e}")
                 # ---------------------
+
+        # Speaking text generation monitoring
+        if (speaking_gen_labels is not None and 
+            hasattr(outputs, "speaking_generation_logits") and 
+            outputs.speaking_generation_logits is not None):
+            monitor_freq = getattr(self.config, 'monitor_log_freq', 0.001)
+            if self.training and random.random() < monitor_freq:
+                with torch.no_grad():
+                    # Get speaking generation loss from log_dict
+                    speaking_gen_loss = log_dict.get("speaking_gen_loss", 0.0)
+                    
+                    # Compute accuracy for generation task
+                    shift_labels = speaking_gen_labels[..., 1:]
+                    mask = shift_labels != -100
+                    
+                    if attention_mask is not None:
+                        shift_attention_mask = attention_mask[:, 1:].bool()
+                        mask = mask & shift_attention_mask
+                    
+                    if mask.any():
+                        shift_logits = outputs.speaking_generation_logits[..., :-1, :]
+                        all_preds = shift_logits.argmax(dim=-1)
+                        
+                        flat_mask = mask.view(-1)
+                        flat_preds = all_preds.view(-1)[flat_mask]
+                        flat_labels = shift_labels.reshape(-1)[flat_mask]
+                        
+                        acc = (flat_preds == flat_labels).float().mean()
+                        logger.info(f"\n[SPEAKING MONITOR] Loss: {speaking_gen_loss:.4f} | Acc: {acc:.2%}")
+                        
+                        # Decode and show text generation
+                        if hasattr(self, "debug_tokenizer") and self.debug_tokenizer:
+                            try:
+                                eos_id = self.debug_tokenizer.eos_token_id
+                                
+                                # Extract first sample's speaking text
+                                sample_labels = speaking_gen_labels[0]
+                                eos_matches = (sample_labels == eos_id).nonzero()
+                                
+                                if len(eos_matches) > 0:
+                                    end_idx = eos_matches[0].item()
+                                    target_ids = sample_labels[:end_idx + 1]
+                                    sample_preds = all_preds[0, :len(target_ids)]
+                                    
+                                    decoded_target = self.debug_tokenizer.decode(target_ids, skip_special_tokens=False)
+                                    decoded_pred = self.debug_tokenizer.decode(sample_preds, skip_special_tokens=False)
+                                    
+                                    logger.info(f"  Target: {decoded_target!r}")
+                                    logger.info(f"  Model : {decoded_pred!r}")
+                                    
+                                    if decoded_target == decoded_pred:
+                                        logger.info("  ✓ Perfect Match")
+                                    else:
+                                        logger.info("  ✗ Mismatch")
+                            except Exception as e:
+                                logger.warning(f"Speaking monitor decoding failed: {e}")
 
         # Fallback to standard labels if separate labels not provided
         if loss is None and labels is not None:
