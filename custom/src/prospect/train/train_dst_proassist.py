@@ -23,7 +23,7 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from transformers import AutoTokenizer, TrainingArguments, BitsAndBytesConfig
 from transformers.integrations import TensorBoardCallback
-from transformers.trainer_callback import EarlyStoppingCallback
+from transformers.trainer_callback import EarlyStoppingCallback, TrainerCallback
 from peft import prepare_model_for_kbit_training
 import wandb
 
@@ -40,6 +40,38 @@ from prospect.utils.logging_utils import Tee
 import importlib.util
 
 logger = logging.getLogger(__name__)
+
+
+class FullModelStateDictCallback(TrainerCallback):
+    """Callback to save full model state dict for each checkpoint.
+    
+    This ensures that all trained parameters (including lm_head) are saved,
+    not just the trainer's default saved weights which might skip certain layers.
+    
+    Only the main process (rank 0) performs the save in distributed training.
+    """
+    
+    def on_save(self, args, state, control, **kwargs):
+        """Save full model state dict when trainer saves a checkpoint.
+        
+        Only executed on the main process (state.is_world_process_zero == True)
+        in distributed training setups to avoid race conditions.
+        """
+        # Only main process (rank 0) saves in distributed training
+        if not state.is_world_process_zero:
+            return
+            
+        checkpoint_path = Path(args.output_dir) / f"checkpoint-{state.global_step}"
+        if checkpoint_path.exists():
+            model = kwargs.get("model")
+            if model is not None:
+                state_dict_path = checkpoint_path / "pytorch_model.bin"
+                torch.save(model.state_dict(), state_dict_path)
+                logger.info(f"✓ [MAIN PROCESS] Saved full model state dict to {state_dict_path}")
+            else:
+                logger.warning("Model not found in on_save callback kwargs")
+        else:
+            logger.warning(f"Checkpoint path does not exist: {checkpoint_path}")
 
 
 @dataclass
@@ -437,6 +469,11 @@ class DSTProAssistTraining:
             f"✓ Early stopping enabled: patience={self.cfg.training.get('early_stopping_patience', 3)}, "
             f"metric=eval_loss"
         )
+        
+        # Add callback to save full model state dict (ensures lm_head is saved)
+        full_model_callback = FullModelStateDictCallback()
+        trainer.add_callback(full_model_callback)
+        self.logger.info("✓ Added full model state dict save callback")
 
         self.logger.info("✓ Created trainer")
         return trainer
@@ -482,8 +519,22 @@ class DSTProAssistTraining:
         # Save final model to checkpoint directory (only from main process)
         if accelerator.is_main_process:
             self.logger.info(f"Saving model to {trainer.args.output_dir}")
-            trainer.save_model()
-            self.tokenizer.save_pretrained(trainer.args.output_dir)
+            
+            # Save the full model state dict (not just trainer.save_model which might skip layers)
+            # This ensures all trained parameters including lm_head are saved
+            output_dir = Path(trainer.args.output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Save full model state dict
+            model_state_dict = self.model.state_dict()
+            save_path = output_dir / "pytorch_model.bin"
+            torch.save(model_state_dict, save_path)
+            self.logger.info(f"✓ Saved full model state dict to {save_path}")
+            
+            # Also save config and tokenizer
+            self.model.config.save_pretrained(output_dir)
+            self.tokenizer.save_pretrained(output_dir)
+            self.logger.info(f"✓ Saved config and tokenizer to {output_dir}")
             self.logger.info("✅ Training complete!")
 
         # Synchronize all processes before exiting

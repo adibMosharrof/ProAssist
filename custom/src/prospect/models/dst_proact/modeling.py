@@ -512,8 +512,13 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
                                         if pred_end_idx <= all_preds.size(1):
                                             sample_preds = all_preds[b_idx, start_idx : pred_end_idx]
                                             
-                                            decoded_target = self.debug_tokenizer.decode(target_ids)
-                                            decoded_pred = self.debug_tokenizer.decode(sample_preds)
+                                            # Debug: show raw tokens before decoding
+                                            logger.info(f"  Target token IDs: {target_ids.tolist()}")
+                                            logger.info(f"  Pred token IDs:   {sample_preds.tolist()}")
+                                            
+                                            # Decode with explicit handling of special tokens
+                                            decoded_target = self.debug_tokenizer.decode(target_ids, skip_special_tokens=False)
+                                            decoded_pred = self.debug_tokenizer.decode(sample_preds, skip_special_tokens=False)
                                             
                                             logger.info(f"  Target: {decoded_target!r}")
                                             logger.info(f"  Model : {decoded_pred!r}")
