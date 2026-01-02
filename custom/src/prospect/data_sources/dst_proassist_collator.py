@@ -347,26 +347,30 @@ class DSTProAssistCollator:
             
             # Add DST updates (if any)
             for dst_text in event.get("dst_updates", []):
-                text_tokens = self.tokenizer.encode(dst_text, add_special_tokens=False)
-                dst_tokens = [self.dst_token_id] + text_tokens + [self.eos_token_id]
+                # Encode the full text with eot marker to ensure proper tokenization
+                text_with_eot = dst_text + self.tokenizer.eos_token
+                text_tokens = self.tokenizer.encode(text_with_eot, add_special_tokens=False)
+                dst_tokens = [self.dst_token_id] + text_tokens
                 
                 input_ids.extend(dst_tokens)
                 # Labels aligned with input_ids (forward pass does the shift for autoregressive)
                 # Position [DST] (idx 0) will predict text_tokens[0] after shift
                 speaking_gen_labels.extend([-100] * len(dst_tokens))
-                dst_gen_labels.extend([-100] + text_tokens + [self.eos_token_id])
+                dst_gen_labels.extend([-100] + text_tokens)
                 speaking_labels.extend([-100] * len(dst_tokens))
                 dst_labels.extend([-100] * len(dst_tokens))
             
             # Add assistant responses (if any)
             for response in event.get("responses", []):
-                text_tokens = self.tokenizer.encode(response, add_special_tokens=False)
-                resp_tokens = [self.asst_token_id] + text_tokens + [self.eos_token_id]
+                # Encode the full text with eot marker to ensure proper tokenization
+                text_with_eot = response + self.tokenizer.eos_token
+                text_tokens = self.tokenizer.encode(text_with_eot, add_special_tokens=False)
+                resp_tokens = [self.asst_token_id] + text_tokens
                 
                 input_ids.extend(resp_tokens)
                 # Labels aligned with input_ids (forward pass does the shift for autoregressive)
                 # Position [ASST] (idx 0) will predict text_tokens[0] after shift
-                speaking_gen_labels.extend([-100] + text_tokens + [self.eos_token_id])
+                speaking_gen_labels.extend([-100] + text_tokens)
                 dst_gen_labels.extend([-100] * len(resp_tokens))
                 speaking_labels.extend([-100] * len(resp_tokens))
                 dst_labels.extend([-100] * len(resp_tokens))
