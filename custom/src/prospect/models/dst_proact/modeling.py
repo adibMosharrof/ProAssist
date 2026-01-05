@@ -277,6 +277,31 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
             self.config.vision_hidden_size, self.config.hidden_size
         )
 
+    def _log_binary_decision(self, logits: torch.Tensor, decision_name: str) -> None:
+        """Log binary decision metrics for positive frames.
+        
+        Args:
+            logits: Logits from binary head for positive frames
+            decision_name: Name of the decision (e.g., "SPEAKING", "DST")
+        """
+        if len(logits) == 0:
+            return
+            
+        probs = torch.sigmoid(logits)
+        
+        # Randomly sample 1-3 frames to log
+        num_to_log = min(random.randint(1, 3), len(logits))
+        log_indices = random.sample(range(len(logits)), num_to_log)
+        
+        for idx in log_indices:
+            logit_val = logits[idx].item()
+            prob_val = probs[idx].item()
+            logger.info(f"[TRAIN] Frame Binary Decision [{decision_name}] (positive):")
+            logger.info(f"  Logit: {logit_val:.4f}")
+            logger.info(f"  Sigmoid prob: {prob_val:.4f}")
+            logger.info(f"  Label: 1 (should trigger {decision_name.lower()})")
+            logger.info(f"  Correct: {prob_val > 0.5}")
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -620,6 +645,14 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
                     outputs.speaking_logits[pos_mask], speaking_labels[pos_mask].float()
                 )
                 speaking_loss += speaking_loss_pos
+                
+                # Log binary decisions for positive frames
+                monitor_freq = getattr(self.config, 'monitor_log_freq', 0.001)
+                if self.training and random.random() < monitor_freq:
+                    with torch.no_grad():
+                        self._log_binary_decision(
+                            outputs.speaking_logits[pos_mask], "SPEAKING"
+                        )
 
             # Loss for negative frames (should not speak)
             if neg_mask.any():
@@ -669,6 +702,14 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
                     dst_update_labels[pos_mask].float(),
                 )
                 dst_loss += dst_loss_pos
+                
+                # Log binary decisions for positive frames
+                monitor_freq = getattr(self.config, 'monitor_log_freq', 0.001)
+                if self.training and random.random() < monitor_freq:
+                    with torch.no_grad():
+                        self._log_binary_decision(
+                            outputs.dst_update_logits[pos_mask], "DST"
+                        )
 
             # Loss for negative frames (should not update DST)
             if neg_mask.any():
