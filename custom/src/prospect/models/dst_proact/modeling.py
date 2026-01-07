@@ -35,28 +35,37 @@ class DSTProActModelMixin(AutoModelForCausalLM):
         )
         self.mm_projector.to(self.device, self.dtype)
 
-        # Binary decision heads (always created for speaking/DST decisions)
-        # Speaking decision head
-        if "linear" in self.config.binary_decision_head_type:
-            self.speaking_decision_head = nn.Linear(lm_input_size, 1)
-        else:
-            self.speaking_decision_head = nn.Sequential(
-                nn.Linear(lm_input_size, lm_input_size // 2),
-                nn.GELU(),
-                nn.Linear(lm_input_size // 2, 1),
-            )
-        self.speaking_decision_head.to(self.device, self.dtype)
+        # Binary decision heads (only created if use_binary_decision_heads=True)
+        # If False, we'll extract probabilities from LM head output instead
+        if self.config.use_binary_decision_heads:
+            # Speaking decision head
+            if "linear" in self.config.binary_decision_head_type:
+                self.speaking_decision_head = nn.Linear(lm_input_size, 1)
+            else:
+                self.speaking_decision_head = nn.Sequential(
+                    nn.Linear(lm_input_size, lm_input_size // 2),
+                    nn.GELU(),
+                    nn.Linear(lm_input_size // 2, 1),
+                )
+            self.speaking_decision_head.to(self.device, self.dtype)
 
-        # DST update decision head
-        if "linear" in self.config.binary_decision_head_type:
-            self.dst_update_head = nn.Linear(lm_input_size, 1)
+            # DST update decision head
+            if "linear" in self.config.binary_decision_head_type:
+                self.dst_update_head = nn.Linear(lm_input_size, 1)
+            else:
+                self.dst_update_head = nn.Sequential(
+                    nn.Linear(lm_input_size, lm_input_size // 2),
+                    nn.GELU(),
+                    nn.Linear(lm_input_size // 2, 1),
+                )
+            self.dst_update_head.to(self.device, self.dtype)
+            
+            logger.info(f"✓ Initialized binary decision heads (type: {self.config.binary_decision_head_type})")
         else:
-            self.dst_update_head = nn.Sequential(
-                nn.Linear(lm_input_size, lm_input_size // 2),
-                nn.GELU(),
-                nn.Linear(lm_input_size // 2, 1),
-            )
-        self.dst_update_head.to(self.device, self.dtype)
+            # Token probability mode - no binary heads needed
+            self.speaking_decision_head = None
+            self.dst_update_head = None
+            logger.info(f"✓ Using token probability approach (asst_token_id: {self.config.asst_gen_token_id}, dst_token_id: {self.config.dst_gen_token_id})")
 
         # Separate DST generation head (optional - controlled by config)
         # Speaking always uses lm_head
@@ -85,6 +94,26 @@ class DSTProActModelMixin(AutoModelForCausalLM):
     def mm_feature_proj(self, features: torch.Tensor) -> torch.Tensor:
         """Project vision features to LLM embedding space."""
         return self.mm_projector(features)
+
+    def _extract_token_probability(
+        self, logits: torch.Tensor, token_id: Optional[int]
+    ) -> Optional[torch.Tensor]:
+        """Extract probability of a specific token from logits.
+        
+        Args:
+            logits: Tensor of shape [batch, seq_len, vocab_size]
+            token_id: Token ID to extract probability for
+            
+        Returns:
+            Tensor of shape [batch, seq_len] with probabilities, or None if token_id is None
+        """
+        if token_id is None:
+            return None
+        
+        # Get softmax probabilities: [batch, seq_len, vocab_size]
+        probs = torch.nn.functional.softmax(logits, dim=-1)
+        # Extract probability of specified token: [batch, seq_len]
+        return probs[..., token_id]
 
     def joint_embed(
         self,
@@ -237,6 +266,7 @@ class DSTProActModelMixin(AutoModelForCausalLM):
             self.inplace_output_ids[:, i] = new_token_id
             token_idx = i
 
+            # Check for EOS token using config.eos_token_id (set from tokenizer during loading)
             if new_token_id.item() == self.config.eos_token_id:
                 break
 
@@ -301,6 +331,113 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
             logger.info(f"  Sigmoid prob: {prob_val:.4f}")
             logger.info(f"  Label: 1 (should trigger {decision_name.lower()})")
             logger.info(f"  Correct: {prob_val > 0.5}")
+
+    def _log_token_probability(self, probs: torch.Tensor, decision_name: str, token_name: str) -> None:
+        """Log token probability metrics for positive frames.
+        
+        Args:
+            probs: Probabilities for positive frames
+            decision_name: Name of the decision (e.g., "SPEAKING", "DST")
+            token_name: Token name (e.g., "[ASST]", "[DST]")
+        """
+        if len(probs) == 0:
+            return
+            
+        num_to_log = min(3, len(probs))
+        log_indices = random.sample(range(len(probs)), num_to_log)
+        
+        logger.info(f"[TRAIN] Frame Token Probability [{decision_name}] (positive):")
+        for idx in log_indices:
+            prob_val = probs[idx].item()
+            logger.info(f"  {token_name} token prob: {prob_val:.4f}")
+            logger.info(f"  Should {decision_name.lower()}: {prob_val > 0.5}")
+
+    def _compute_binary_decision_loss(
+        self,
+        logits: torch.Tensor,
+        labels: torch.Tensor,
+        decision_name: str,
+        token_name: str,
+    ) -> torch.Tensor:
+        """Compute binary decision loss with optional logging.
+        
+        Args:
+            logits: Logits or probabilities from decision module
+            labels: Binary labels (0 or 1)
+            decision_name: Name of decision (e.g., "SPEAKING", "DST")
+            token_name: Token name for logging (e.g., "[ASST]", "[DST]")
+            
+        Returns:
+            Loss value (tensor or float)
+        """
+        pos_mask = labels == 1
+        neg_mask = labels == 0
+        loss = 0.0
+        
+        # Convert token probabilities to logit space if needed
+        if not self.config.use_binary_decision_heads:
+            eps = 1e-7
+            # Save clamped probs for logging before converting to logit space
+            clamped_probs = torch.clamp(logits, eps, 1 - eps)
+            logits = torch.logit(clamped_probs)  # Convert probabilities to logit space
+        else:
+            clamped_probs = None
+
+        # Loss for positive frames
+        if pos_mask.any():
+            loss_pos = bce_loss(logits[pos_mask], labels[pos_mask].float())
+            loss += loss_pos
+            
+            # Logging
+            monitor_freq = getattr(self.config, 'monitor_log_freq', 0.001)
+            if self.training and random.random() < monitor_freq:
+                with torch.no_grad():
+                    if self.config.use_binary_decision_heads:
+                        self._log_binary_decision(logits[pos_mask], decision_name)
+                    else:
+                        # Log the actual clamped probabilities
+                        self._log_token_probability(clamped_probs[pos_mask], decision_name, token_name)
+
+        # Loss for negative frames
+        if neg_mask.any():
+            loss_neg = bce_loss(logits[neg_mask], labels[neg_mask].float())
+            loss += loss_neg
+
+        # Average to balance gradient contributions
+        if pos_mask.any() and neg_mask.any():
+            loss = loss / 2.0
+
+        return loss
+
+    def _compute_predictions_from_logits(
+        self,
+        logits: torch.Tensor,
+        labels: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Compute predictions from logits, handling both binary heads and token probabilities.
+        
+        Args:
+            logits: Logits or probabilities
+            labels: Labels to mask
+            
+        Returns:
+            Tuple of (predictions, targets)
+        """
+        mask = labels != self.config.ignore_id
+        if not mask.any():
+            return None, None
+
+        if self.config.use_binary_decision_heads:
+            # Binary heads: apply sigmoid
+            preds = (
+                torch.sigmoid(logits[mask]) > self.config.binary_threshold
+            ).long()
+        else:
+            # Token probability: probabilities are already in [0, 1]
+            preds = (logits[mask] > self.config.binary_threshold).long()
+
+        targets = labels[mask].long()
+        return preds, targets
 
     def forward(
         self,
@@ -375,15 +512,22 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
         )
         outputs.attentions = base_outputs.attentions if output_attentions else None
 
-        # Binary head outputs
+        # Binary head outputs or token probability outputs
         outputs.speaking_logits = None
         outputs.dst_update_logits = None
-        if self.speaking_decision_head:
-            outputs.speaking_logits = self.speaking_decision_head(
-                hidden_states
-            ).squeeze(-1)
-        if self.dst_update_head:
-            outputs.dst_update_logits = self.dst_update_head(hidden_states).squeeze(-1)
+        
+        if self.config.use_binary_decision_heads:
+            # Binary head approach: separate heads for decisions
+            if self.speaking_decision_head:
+                outputs.speaking_logits = self.speaking_decision_head(
+                    hidden_states
+                ).squeeze(-1)
+            if self.dst_update_head:
+                outputs.dst_update_logits = self.dst_update_head(hidden_states).squeeze(-1)
+        else:
+            # Token probability approach: extract probabilities from LM head
+            # Get logits from lm_head (we'll compute them below, so store for later)
+            outputs._use_token_probability = True
 
         # Generation head routing: use separate heads for speaking vs DST
         # During training/eval with labels, we know which tokens belong to which task
@@ -406,6 +550,18 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
                 outputs.speaking_generation_logits = unified_logits
                 outputs.dst_generation_logits = unified_logits
                 outputs.logits = unified_logits
+            
+            # Extract token probabilities if using token probability approach
+            if not self.config.use_binary_decision_heads:
+                # Extract probability of special tokens from logits
+                # speaking: probability of [ASST] token
+                # dst: probability of [DST] token
+                outputs.speaking_logits = self._extract_token_probability(
+                    outputs.speaking_generation_logits, self.config.asst_gen_token_id
+                )
+                outputs.dst_update_logits = self._extract_token_probability(
+                    outputs.dst_generation_logits, self.config.dst_gen_token_id
+                )
         else:
             # Inference: need to determine which head to use
             # If we have binary predictions, use them; otherwise default to speaking
@@ -415,6 +571,15 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
             else:
                 # Single head mode: use lm_head
                 outputs.logits = self.lm_head(hidden_states)
+            
+            # Extract token probabilities if using token probability approach
+            if not self.config.use_binary_decision_heads:
+                outputs.speaking_logits = self._extract_token_probability(
+                    outputs.logits, self.config.asst_gen_token_id
+                )
+                outputs.dst_update_logits = self._extract_token_probability(
+                    outputs.logits, self.config.dst_gen_token_id
+                )
 
         # Compute losses
         loss = None
@@ -449,6 +614,9 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
                 )
                 loss = speaking_gen_loss
                 log_dict["speaking_gen_loss"] = speaking_gen_loss.item()
+            else:
+                # Even with empty mask, record a zero loss for logging
+                log_dict["speaking_gen_loss"] = 0.0
 
         if (
             dst_gen_labels is not None
@@ -477,6 +645,9 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
                 )
                 loss = (loss + dst_gen_loss) if loss is not None else dst_gen_loss
                 log_dict["dst_gen_loss"] = dst_gen_loss.item()
+            else:
+                # Even with empty mask, record a zero loss for logging
+                log_dict["dst_gen_loss"] = 0.0
                 
                 # --- DEBUG LOGGING (Optimized for VRAM) ---
                 # Log very rarely (controlled by config) to check generation quality
@@ -632,38 +803,14 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
             loss = lm_loss
             log_dict["lm_loss"] = lm_loss.item()
 
-        if speaking_labels is not None and self.speaking_decision_head:
-            # Follow ProAssist's approach: separate loss for positive and negative frames
-            pos_mask = speaking_labels == 1
-            neg_mask = speaking_labels == 0
-
-            speaking_loss = 0.0
-
-            # Loss for positive frames (should speak)
-            if pos_mask.any():
-                speaking_loss_pos = bce_loss(
-                    outputs.speaking_logits[pos_mask], speaking_labels[pos_mask].float()
-                )
-                speaking_loss += speaking_loss_pos
-                
-                # Log binary decisions for positive frames
-                monitor_freq = getattr(self.config, 'monitor_log_freq', 0.001)
-                if self.training and random.random() < monitor_freq:
-                    with torch.no_grad():
-                        self._log_binary_decision(
-                            outputs.speaking_logits[pos_mask], "SPEAKING"
-                        )
-
-            # Loss for negative frames (should not speak)
-            if neg_mask.any():
-                speaking_loss_neg = bce_loss(
-                    outputs.speaking_logits[neg_mask], speaking_labels[neg_mask].float()
-                )
-                speaking_loss += speaking_loss_neg
-
-            # Average to balance gradient contributions
-            if pos_mask.any() and neg_mask.any():
-                speaking_loss = speaking_loss / 2.0
+        if speaking_labels is not None and outputs.speaking_logits is not None:
+            # Compute binary decision loss
+            speaking_loss = self._compute_binary_decision_loss(
+                outputs.speaking_logits,
+                speaking_labels,
+                "SPEAKING",
+                "[ASST]",
+            )
 
             log_dict["speaking_binary_loss"] = (
                 speaking_loss.item()
@@ -677,51 +824,21 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
             )
 
             # Store predictions and targets for metric computation in trainer
-            mask = speaking_labels != self.config.ignore_id
-            if mask.any():
-                preds = (
-                    torch.sigmoid(outputs.speaking_logits[mask])
-                    > self.config.binary_threshold
-                ).long()
-                targets = speaking_labels[mask].long()
-                # Store for trainer to compute metrics
+            preds, targets = self._compute_predictions_from_logits(
+                outputs.speaking_logits, speaking_labels
+            )
+            if preds is not None:
                 log_dict["speaking_preds"] = preds
                 log_dict["speaking_targets"] = targets
 
-        if dst_update_labels is not None and self.dst_update_head:
-            # Follow ProAssist's approach: separate loss for positive and negative frames
-            pos_mask = dst_update_labels == 1
-            neg_mask = dst_update_labels == 0
-
-            dst_loss = 0.0
-
-            # Loss for positive frames (should update DST)
-            if pos_mask.any():
-                dst_loss_pos = bce_loss(
-                    outputs.dst_update_logits[pos_mask],
-                    dst_update_labels[pos_mask].float(),
-                )
-                dst_loss += dst_loss_pos
-                
-                # Log binary decisions for positive frames
-                monitor_freq = getattr(self.config, 'monitor_log_freq', 0.001)
-                if self.training and random.random() < monitor_freq:
-                    with torch.no_grad():
-                        self._log_binary_decision(
-                            outputs.dst_update_logits[pos_mask], "DST"
-                        )
-
-            # Loss for negative frames (should not update DST)
-            if neg_mask.any():
-                dst_loss_neg = bce_loss(
-                    outputs.dst_update_logits[neg_mask],
-                    dst_update_labels[neg_mask].float(),
-                )
-                dst_loss += dst_loss_neg
-
-            # Average to balance gradient contributions
-            if pos_mask.any() and neg_mask.any():
-                dst_loss = dst_loss / 2.0
+        if dst_update_labels is not None and outputs.dst_update_logits is not None:
+            # Compute binary decision loss
+            dst_loss = self._compute_binary_decision_loss(
+                outputs.dst_update_logits,
+                dst_update_labels,
+                "DST",
+                "[DST]",
+            )
 
             log_dict["dst_binary_loss"] = (
                 dst_loss.item() if isinstance(dst_loss, torch.Tensor) else dst_loss
@@ -733,14 +850,10 @@ class DSTProActLlamaForCausalLM(LlamaForCausalLM, DSTProActModelMixin):
             )
 
             # Store predictions and targets for metric computation in trainer
-            mask = dst_update_labels != self.config.ignore_id
-            if mask.any():
-                preds = (
-                    torch.sigmoid(outputs.dst_update_logits[mask])
-                    > self.config.binary_threshold
-                ).long()
-                targets = dst_update_labels[mask].long()
-                # Store for trainer to compute metrics
+            preds, targets = self._compute_predictions_from_logits(
+                outputs.dst_update_logits, dst_update_labels
+            )
+            if preds is not None:
                 log_dict["dst_preds"] = preds
                 log_dict["dst_targets"] = targets
 

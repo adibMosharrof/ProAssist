@@ -34,7 +34,7 @@ class DSTProAssistTrainer(Trainer):
         # Initialize logger
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.info(
-            "Initialized DSTProAssistTrainer with binary heads + separate losses"
+            "Initialized DSTProAssistTrainer with binary decision losses + generation losses"
         )
 
         # Buffer for accumulating metrics between logging steps
@@ -78,7 +78,7 @@ class DSTProAssistTrainer(Trainer):
                     balanced_accuracy_score(targets, preds)
                 )
                 precision, recall, f1, _ = precision_recall_fscore_support(
-                    targets, preds, average="binary", zero_division=0
+                    targets, preds, average="binary", zero_division=0, labels=[0, 1]
                 )
                 outputs["speaking_precision"] = float(precision)
                 outputs["speaking_recall"] = float(recall)
@@ -87,12 +87,20 @@ class DSTProAssistTrainer(Trainer):
             if "dst_preds" in outputs and "dst_targets" in outputs:
                 preds = outputs["dst_preds"].cpu().numpy()
                 targets = outputs["dst_targets"].cpu().numpy()
+                
+                # Debug: log the distribution
+                logger.warning(f"DST Predictions - unique values: {set(preds)}")
+                logger.warning(f"DST Targets - unique values: {set(targets)}")
+                logger.warning(f"DST - Num preds: {len(preds)}, Num targets: {len(targets)}")
+                if len(preds) > 0:
+                    logger.warning(f"DST - Pred class distribution: {(preds == 1).sum()} ones, {(preds == 0).sum()} zeros")
+                    logger.warning(f"DST - Target class distribution: {(targets == 1).sum()} ones, {(targets == 0).sum()} zeros")
 
                 outputs["dst_balanced_accuracy"] = float(
                     balanced_accuracy_score(targets, preds)
                 )
                 precision, recall, f1, _ = precision_recall_fscore_support(
-                    targets, preds, average="binary", zero_division=0
+                    targets, preds, average="binary", zero_division=0, labels=[0, 1]
                 )
                 outputs["dst_precision"] = float(precision)
                 outputs["dst_recall"] = float(recall)
@@ -114,11 +122,12 @@ class DSTProAssistTrainer(Trainer):
                 "dst_f1",
             ]
 
+            # Initialize buffers for metrics
             for metric in metric_names:
-                if metric in outputs and outputs[metric] is not None:
-                    if metric not in metrics_buffer:
-                        metrics_buffer[metric] = []
-                    # Handle both tensor and scalar values
+                if metric not in metrics_buffer:
+                    metrics_buffer[metric] = []
+                # Handle both tensor and scalar values
+                if metric in outputs:
                     value = outputs[metric]
                     if isinstance(value, torch.Tensor):
                         value = value.item()

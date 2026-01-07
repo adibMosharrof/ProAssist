@@ -81,7 +81,9 @@ class ModelConfig:
     llm_pretrained: str = "meta-llama/Llama-3.2-3B-Instruct"
     vision_hidden_size: int = 1152  # SigLIP output dimension
     max_seq_len: int = 4096
-    # Binary decision heads (always enabled)
+    # Data collator mode selection
+    use_binary_decision_heads: bool = True  # If False: use DSTGenerationCollator (generation-only); if True: use binary heads
+    # Binary decision heads
     binary_decision_head_type: str = "linear"
     binary_loss_weight: float = 1.0
     binary_threshold: float = 0.5  # Threshold for binary classification
@@ -196,6 +198,7 @@ class DSTProAssistTraining:
             model_cfg.llm_pretrained,
             vision_hidden_size=model_cfg.vision_hidden_size,
             max_seq_len=model_cfg.max_seq_len,
+            use_binary_decision_heads=model_cfg.use_binary_decision_heads,
             use_separate_generation_heads=model_cfg.use_separate_generation_heads,
             binary_decision_head_type=model_cfg.binary_decision_head_type,
             binary_loss_weight=model_cfg.binary_loss_weight,
@@ -400,7 +403,15 @@ class DSTProAssistTraining:
 
     def _setup_data_collator(self, data_cfg: DataConfig, model_cfg: ModelConfig):
         """Setup data collator."""
-        self.data_collator = self.DSTProAssistCollator(
+        if not model_cfg.use_binary_decision_heads:
+            self.logger.info("Using DSTGenerationCollator (Generation-Only Mode)")
+            from prospect.data_sources.dst_generation_collator import DSTGenerationCollator
+            CollatorClass = DSTGenerationCollator
+        else:
+            self.logger.info("Using DSTProAssistCollator (Binary Heads Mode)")
+            CollatorClass = self.DSTProAssistCollator
+            
+        self.data_collator = CollatorClass(
             tokenizer=self.tokenizer,
             max_seq_len=model_cfg.max_seq_len,
             siglip_features_dir=Path(data_cfg.siglip_features_dir),
@@ -432,7 +443,7 @@ class DSTProAssistTraining:
             eval_strategy="steps" if "val" in self.datasets else "no",
             save_strategy="steps",
             save_total_limit=self.cfg.training.save_total_limit,
-            load_best_model_at_end=False,
+            load_best_model_at_end=True,
             metric_for_best_model="eval_loss" if "val" in self.datasets else None,
             bf16=self.cfg.training.bf16,
             fp16=self.cfg.training.fp16,
@@ -490,10 +501,10 @@ class DSTProAssistTraining:
             self.logger.info("=" * 80)
             self.logger.info(f"🚀 Multi-GPU setup: {accelerator.num_processes} GPUs")
 
-        # Create configs
-        model_cfg = ModelConfig(**self.cfg.model)
-        lora_cfg = LoRAConfig(**self.cfg.lora)
-        data_cfg = DataConfig(**self.cfg.data)
+        # Create configs - convert DictConfig to dict to ensure proper unpacking
+        model_cfg = ModelConfig(**OmegaConf.to_container(self.cfg.model))
+        lora_cfg = LoRAConfig(**OmegaConf.to_container(self.cfg.lora))
+        data_cfg = DataConfig(**OmegaConf.to_container(self.cfg.data))
 
         # Set siglip_features_dir if not specified
         if data_cfg.siglip_features_dir is None:

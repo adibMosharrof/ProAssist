@@ -48,6 +48,7 @@ class DSTProActConfig(PretrainedConfig):
         asst_gen_token_id: Optional[int] = None,
         eos_token_id: Optional[int] = None,
         use_separate_generation_heads: bool = False,
+        use_binary_decision_heads: bool = True,
         binary_decision_head_type: str = "linear",
         binary_loss_weight: float = 1.0,
         binary_threshold: float = 0.5,
@@ -70,6 +71,7 @@ class DSTProActConfig(PretrainedConfig):
         self.asst_gen_token_id = asst_gen_token_id
         self.eos_token_id = eos_token_id
         self.use_separate_generation_heads = use_separate_generation_heads
+        self.use_binary_decision_heads = use_binary_decision_heads
         self.binary_decision_head_type = binary_decision_head_type
         self.binary_loss_weight = binary_loss_weight
         self.binary_threshold = binary_threshold
